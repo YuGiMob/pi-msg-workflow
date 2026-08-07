@@ -243,6 +243,12 @@ describe("workflow extension", () => {
     expect(pi.exec).toHaveBeenCalledTimes(6);
   });
 
+  it("uses the configured default for partially numeric arguments", async () => {
+    const ctx = createCtx(fullPhaseA());
+    await commands["workflow"].handler("3abc", ctx);
+    expect(pi.exec).toHaveBeenCalledTimes(6);
+  });
+
   it("clamps rounds to the maximum", async () => {
     const ctx = createCtx(fullPhaseA());
     await commands["workflow"].handler("99", ctx);
@@ -256,6 +262,29 @@ describe("workflow extension", () => {
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Command 1 failed"), "error");
     expect(ctx.navigateTree).toHaveBeenCalledTimes(1);
     expect(pi.sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it("runs loop commands with quoted arguments", async () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ rounds: 1, start: [], loop: [{ tree: "1" }, { cmd: "1" }] });
+      if (String(path).includes("commands.json")) return JSON.stringify({ "1": "git commit -m \"my message\"" });
+      return JSON.stringify(MESSAGES);
+    });
+    const ctx = createCtx(fullPhaseA());
+    await commands["workflow"].handler("", ctx);
+    expect(pi.exec).toHaveBeenCalledWith("git", ["commit", "-m", "my message"]);
+  });
+
+  it("aborts on a loop command with an unterminated quote", async () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ rounds: 1, start: [], loop: [{ tree: "1" }, { cmd: "1" }] });
+      if (String(path).includes("commands.json")) return JSON.stringify({ "1": "git commit -m \"my message" });
+      return JSON.stringify(MESSAGES);
+    });
+    const ctx = createCtx(fullPhaseA());
+    await commands["workflow"].handler("", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Command 1 has an unterminated quote.", "error");
+    expect(pi.exec).not.toHaveBeenCalled();
   });
 
   it("sends the validation message when changes are detected", async () => {
@@ -340,6 +369,13 @@ describe("workflow extension", () => {
     const ctx = createCtx(entries);
     await commands["workflow"].handler("", ctx);
     expect(ctx.navigateTree).toHaveBeenCalledWith("a4", { summarize: false });
+  });
+
+  it("anchors to the response of the last start message when it is the tree anchor", async () => {
+    holder.workflow = { rounds: 1, start: ["1"], loop: [{ tree: "1" }] };
+    const ctx = createCtx([]);
+    await commands["workflow"].handler("", ctx);
+    expect(ctx.navigateTree).toHaveBeenCalledWith("a0", { summarize: false });
   });
 
   it("retries and reports failure when a message cannot be sent", async () => {
@@ -511,11 +547,24 @@ describe("/tree-jump command", () => {
     expect(ctx.navigateTree).not.toHaveBeenCalled();
   });
 
+  it("warns when the message is absent from a non-empty session", async () => {
+    const ctx = createCtx([userEntry("u1", MSG1), assistantEntry("a1")]);
+    await commands["tree-jump"].handler("2", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Could not find message 2 in the session.", "warning");
+    expect(ctx.navigateTree).not.toHaveBeenCalled();
+  });
+
   it("navigates to the anchor of the message response", async () => {
     const ctx = createCtx(fullPhaseA());
     await commands["tree-jump"].handler("1", ctx);
     expect(ctx.navigateTree).toHaveBeenCalledWith("a1", { summarize: false });
     expect(ctx.ui.notify).toHaveBeenCalledWith("Context reset to the response of message 1", "info");
+  });
+
+  it("anchors to the response when the message is the last user message", async () => {
+    const ctx = createCtx([userEntry("u1", MSG1), assistantEntry("a1")]);
+    await commands["tree-jump"].handler("1", ctx);
+    expect(ctx.navigateTree).toHaveBeenCalledWith("a1", { summarize: false });
   });
 
   it("notifies when navigation is cancelled", async () => {
@@ -624,6 +673,18 @@ describe("getWorkflowConfig", () => {
     );
     const { config, errors } = getWorkflowConfig();
     expect(config.loop).toEqual([{ tree: "1" }, { send: "6", onlyIfChanges: true }]);
+    expect(errors).toHaveLength(2);
+  });
+
+  it("rejects non-numeric step indices", () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReturnValue(
+      JSON.stringify({
+        loop: [{ tree: "1" }, { send: "abc" }, { cmd: "x" }],
+      }) as never,
+    );
+    const { config, errors } = getWorkflowConfig();
+    expect(config.loop).toEqual([{ tree: "1" }]);
     expect(errors).toHaveLength(2);
   });
 });

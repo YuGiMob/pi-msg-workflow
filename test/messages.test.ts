@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
 
 const MESSAGES = {
   "1": "Test message one",
@@ -121,6 +121,26 @@ describe("messages extension", () => {
       expect(ctx.ui.notify).toHaveBeenCalledWith("Message 3 updated", "info");
     });
 
+    it("writes atomically via a tmp file and rename", async () => {
+      const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
+      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
+      await cmd.cmd.handler('3 "New test message"', ctx);
+      expect(writeFileSync).toHaveBeenCalledWith(expect.stringContaining("messages.json.tmp"), expect.any(String), "utf-8");
+      expect(renameSync).toHaveBeenCalledWith(expect.stringContaining("messages.json.tmp"), expect.stringContaining("messages.json"));
+    });
+
+    it("writes store keys in numeric order", async () => {
+      vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+        if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+        return JSON.stringify({ "2": "second message", "1": "first message" });
+      });
+      const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
+      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
+      await cmd.cmd.handler('3 "third message"', ctx);
+      const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
+      expect(Object.keys(written)).toEqual(["1", "2", "3"]);
+    });
+
     it("shows warning for short messages", async () => {
       const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
       const ctx = { hasUI: true, ui: { notify: vi.fn() } };
@@ -207,7 +227,7 @@ describe("messages extension", () => {
 
     it("performs a predefined command by number", async () => {
       const cmd = capturedCommands.find((c: any) => c.name === "cmd");
-      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
+      const ctx = { hasUI: true, ui: { notify: vi.fn(), setWorkingMessage: vi.fn() } };
 
       await cmd.cmd.handler("1", ctx);
 
@@ -219,11 +239,76 @@ describe("messages extension", () => {
     it("reports a failed command", async () => {
       pi.exec = vi.fn(async () => ({ code: 1, stdout: "", stderr: "boom" }));
       const cmd = capturedCommands.find((c: any) => c.name === "cmd");
-      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
+      const ctx = { hasUI: true, ui: { notify: vi.fn(), setWorkingMessage: vi.fn() } };
 
       await cmd.cmd.handler("1", ctx);
 
       expect(ctx.ui.notify).toHaveBeenCalledWith("Command 1 failed: boom", "error");
+    });
+
+    it("splits quoted arguments correctly", async () => {
+      vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+        if (String(path).includes("commands.json")) return JSON.stringify({ "1": "git commit -m \"my message\"" });
+        return JSON.stringify(MESSAGES);
+      });
+      const cmd = capturedCommands.find((c: any) => c.name === "cmd");
+      const ctx = { hasUI: true, ui: { notify: vi.fn(), setWorkingMessage: vi.fn() } };
+      await cmd.cmd.handler("1", ctx);
+      expect(pi.exec).toHaveBeenCalledWith("git", ["commit", "-m", "my message"]);
+    });
+
+    it("preserves empty quoted arguments", async () => {
+      vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+        if (String(path).includes("commands.json")) return JSON.stringify({ "1": "git commit -m \"\"" });
+        return JSON.stringify(MESSAGES);
+      });
+      const cmd = capturedCommands.find((c: any) => c.name === "cmd");
+      const ctx = { hasUI: true, ui: { notify: vi.fn(), setWorkingMessage: vi.fn() } };
+      await cmd.cmd.handler("1", ctx);
+      expect(pi.exec).toHaveBeenCalledWith("git", ["commit", "-m", ""]);
+    });
+
+    it("supports escaped quotes inside double-quoted arguments", async () => {
+      vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+        if (String(path).includes("commands.json")) return JSON.stringify({ "1": "git commit -m \"say \\\"hi\\\"\"" });
+        return JSON.stringify(MESSAGES);
+      });
+      const cmd = capturedCommands.find((c: any) => c.name === "cmd");
+      const ctx = { hasUI: true, ui: { notify: vi.fn(), setWorkingMessage: vi.fn() } };
+      await cmd.cmd.handler("1", ctx);
+      expect(pi.exec).toHaveBeenCalledWith("git", ["commit", "-m", 'say "hi"']);
+    });
+
+    it("rejects a command with an unterminated quote", async () => {
+      vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+        if (String(path).includes("commands.json")) return JSON.stringify({ "1": "git commit -m \"my message" });
+        return JSON.stringify(MESSAGES);
+      });
+      const cmd = capturedCommands.find((c: any) => c.name === "cmd");
+      const ctx = { hasUI: true, ui: { notify: vi.fn(), setWorkingMessage: vi.fn() } };
+      await cmd.cmd.handler("1", ctx);
+      expect(pi.exec).not.toHaveBeenCalled();
+      expect(ctx.ui.notify).toHaveBeenCalledWith("Command 1 has an unterminated quote.", "warning");
+    });
+
+    it("does not set a working message for an empty command", async () => {
+      vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+        if (String(path).includes("commands.json")) return JSON.stringify({ "1": "   " });
+        return JSON.stringify(MESSAGES);
+      });
+      const cmd = capturedCommands.find((c: any) => c.name === "cmd");
+      const ctx = { hasUI: true, ui: { notify: vi.fn(), setWorkingMessage: vi.fn() } };
+      await cmd.cmd.handler("1", ctx);
+      expect(ctx.ui.setWorkingMessage).not.toHaveBeenCalled();
+      expect(ctx.ui.notify).toHaveBeenCalledWith("Command 1 is empty.", "warning");
+    });
+
+    it("sets a working message while executing", async () => {
+      const cmd = capturedCommands.find((c: any) => c.name === "cmd");
+      const ctx = { hasUI: true, ui: { notify: vi.fn(), setWorkingMessage: vi.fn() } };
+      await cmd.cmd.handler("1", ctx);
+      expect(ctx.ui.setWorkingMessage).toHaveBeenCalledWith(expect.stringContaining("git add ."));
+      expect(ctx.ui.setWorkingMessage).toHaveBeenLastCalledWith();
     });
 
     it("points to /change-cmd when the command does not exist", async () => {

@@ -37,7 +37,7 @@ function isStep(value: unknown): value is LoopStep {
   const action = actionKeys[0]!;
   if (action !== "send" && "onlyIfChanges" in step) return false;
   if (action === "tree" || action === "send" || action === "cmd") {
-    if (typeof step[action] !== "string" || step[action] === "") return false;
+    if (typeof step[action] !== "string" || !/^\d+$/.test(step[action])) return false;
     if ("onlyIfChanges" in step && typeof step.onlyIfChanges !== "boolean") return false;
     return true;
   }

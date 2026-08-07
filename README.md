@@ -9,7 +9,7 @@ A [pi-coding-agent](https://github.com/badlogic/pi-mono/tree/main/packages/codin
 - **`/cmd <number>`** — perform a predefined command (e.g. `git add .` is executed via `pi.exec`).
 - **`/change-cmd <number> "<content>"`** / **`/show-cmd [number]`** — create, update and list commands.
 - **`/workflow [rounds]`** — runs the configured workflow: a start phase (analysis messages), then review rounds. The whole sequence is defined in `workflow.json`, so you decide which messages or commands happen when.
-- **`/workflow-edit`** — opens an interactive editor overlay with three tabs: **[Workflow]** (rounds, start order, loop steps, tree anchor, add/delete/reorder, if-changes toggle), **[Messages]** and **[Commands]** (add, edit and delete store entries). Changes are saved with `s` (per tab) and closing with unsaved changes warns you.
+- **`/workflow-edit`** — opens an interactive editor overlay with three tabs: **[Workflow]** (rounds, start order, loop steps, tree anchor, add/delete/reorder, if-changes toggle), **[Messages]** and **[Commands]** (add, edit and delete store entries). Changes are saved with `s` (per tab) and closing with unsaved changes asks for confirmation.
 - **`/tree-jump <number>`** — resets the agent's context to the response of a predefined message (by its index). The workflow loop always begins with a tree step.
 - **`/workflow-stop`** — cancels a running workflow after the current step completes.
 - **Start-phase resume.** Messages whose text is already present in the session branch are skipped, so an interrupted workflow continues where it left off.
@@ -52,7 +52,7 @@ The package ships with default `messages.json` (`1`–`7`), `commands.json` (`1`
 | `t` | toggle `onlyIfChanges` on a send step |
 | `[` / `]` | decrease / increase rounds |
 | `s` | save the active tab |
-| `q` / `Esc` | close (warns about unsaved changes) |
+| `q` / `Esc` | close (asks for confirmation when there are unsaved changes) |
 
 Saving the Workflow tab refuses indices that reference missing messages or commands, so add those in the Messages/Commands tabs first. Saving the Messages and Commands tabs refuses to delete entries still referenced by the workflow, so drop those references in the Workflow tab first. The tree step is fixed as the first loop step — only its anchor index is editable.
 
@@ -94,7 +94,10 @@ Ordered list of steps repeated each round. The **first step must be a `tree` ste
 | `{ "send": "5", "onlyIfChanges": true }` | Send message `5` only when `git status --porcelain` shows changes |
 | `{ "cmd": "1" }` | Perform command `1` from the command store (e.g. `git add .`) |
 
+`onlyIfChanges` runs `git status --porcelain` in the project directory, so it requires the project to be a git repository.
 Message indices refer to the numbered message store — `/msg 6` and `{ "send": "6" }` address the same message. Command indices refer to the numbered command store — `/cmd 1`, `/change-cmd 1 "git add ."`, and `{ "cmd": "1" }` all address the same command. The default message store is numbered `1`–`7` in workflow order: read, improvements, value check, implement, validate, closer look, fix. The default command store has `1` = `git add .`.
+
+Command content is split on whitespace; single- and double-quoted arguments are supported (e.g. `git commit -m "fix"`), with `\"` and `\\` escapes inside double quotes. Unterminated quotes are rejected.
 
 Invalid config values are reported with a `[pi-workflow]` warning and fall back to the defaults shown above.
 

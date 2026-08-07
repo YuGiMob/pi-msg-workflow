@@ -29,9 +29,10 @@ vi.mock("@earendil-works/pi-tui", () => ({
     if (key === "shift-tab") return data === "\x1b[Z";
     return false;
   },
-  visibleWidth: (s: string) => s.length,
+  visibleWidth: vi.fn((s: string) => s.length),
 }));
 
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { WorkflowTab, MessagesTab, CommandsTab, WorkflowEditorOverlay } from "../src/workflow-editor.js";
 
 const MSG1 = "Read the entirety of the codebase";
@@ -303,6 +304,23 @@ describe("WorkflowTab", () => {
     expect(lines.join("\n")).toContain("send 6");
     expect(lines.join("\n")).toContain("cmd 1: git add .");
   });
+
+  it("truncates rows to the visible width for wide characters", () => {
+    vi.mocked(visibleWidth).mockImplementation((s: string) => [...s].reduce((n, ch) => n + (ch.charCodeAt(0) > 0x2e7f ? 2 : 1), 0));
+    try {
+      vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+        if (String(path).includes("workflow.json")) return JSON.stringify(WORKFLOW_JSON);
+        if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+        return JSON.stringify({ ...MESSAGES, "1": "界".repeat(100) });
+      });
+      const lines = tab.render(78, 12);
+      for (const line of lines) {
+        expect(visibleWidth(line)).toBeLessThanOrEqual(78);
+      }
+    } finally {
+      vi.mocked(visibleWidth).mockImplementation((s: string) => s.length);
+    }
+  });
 });
 
 describe("MessagesTab", () => {
@@ -528,13 +546,23 @@ describe("WorkflowEditorOverlay", () => {
     expect(onNotify).not.toHaveBeenCalled();
   });
 
-  it("warns about unsaved changes on close", () => {
+  it("requires a second q to close with unsaved changes", () => {
     workflowTab.handleInput("e");
     workflowTab.handleInput("9");
     workflowTab.handleInput("\r");
     overlay.handleInput("q");
-    expect(onNotify).toHaveBeenCalledWith("Workflow editor closed with unsaved changes", "warning");
+    expect(onNotify).toHaveBeenCalledWith("Unsaved changes - press q again to close", "warning");
+    expect(done).not.toHaveBeenCalled();
+    overlay.handleInput("q");
     expect(done).toHaveBeenCalled();
+  });
+
+  it("marks dirty tabs in the tab bar", () => {
+    workflowTab.handleInput("e");
+    workflowTab.handleInput("9");
+    workflowTab.handleInput("\r");
+    const lines = overlay.render(80);
+    expect(lines[2]).toContain("[Workflow*]");
   });
 
   it("lets the active tab consume keys first", () => {

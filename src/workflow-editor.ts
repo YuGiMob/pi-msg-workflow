@@ -30,8 +30,16 @@ const PASTE_START = "\x1b[200~";
 const PASTE_END = "\x1b[201~";
 
 function truncate(text: string, width: number): string {
-  if (text.length <= width) return text;
-  return `${text.slice(0, Math.max(0, width - 1))}…`;
+  if (visibleWidth(text) <= width) return text;
+  let result = "";
+  let used = 0;
+  for (const ch of text) {
+    const w = visibleWidth(ch);
+    if (used + w > width - 1) break;
+    result += ch;
+    used += w;
+  }
+  return `${result}…`;
 }
 
 abstract class BaseEditorTab implements EditorTab {
@@ -557,6 +565,7 @@ export interface WorkflowEditorOverlayOptions {
 
 export class WorkflowEditorOverlay {
   private activeTab = 0;
+  private confirmingClose = false;
 
   constructor(private readonly opts: WorkflowEditorOverlayOptions) {}
 
@@ -567,20 +576,33 @@ export class WorkflowEditorOverlay {
   handleInput(data: string): void {
     if (matchesKey(data, Key.tab)) {
       this.activeTab = (this.activeTab + 1) % this.opts.tabs.length;
+      this.confirmingClose = false;
       return;
     }
     if (matchesKey(data, Key.shift("tab"))) {
       this.activeTab = (this.activeTab - 1 + this.opts.tabs.length) % this.opts.tabs.length;
+      this.confirmingClose = false;
       return;
     }
     const consumed = this.active.handleInput(data);
-    if (consumed) return;
+    if (consumed) {
+      this.confirmingClose = false;
+      return;
+    }
     if (matchesKey(data, Key.escape) || data === "q") {
+      if (this.confirmingClose) {
+        this.opts.done();
+        return;
+      }
       if (this.opts.tabs.some((tab) => tab.dirty)) {
-        this.opts.onNotify("Workflow editor closed with unsaved changes", "warning");
+        this.confirmingClose = true;
+        this.opts.onNotify("Unsaved changes - press q again to close", "warning");
+        return;
       }
       this.opts.done();
+      return;
     }
+    this.confirmingClose = false;
   }
 
   invalidate(): void {}
@@ -601,7 +623,8 @@ export class WorkflowEditorOverlay {
     let tabBar = " ";
     for (let i = 0; i < this.opts.tabs.length; i++) {
       const tab = this.opts.tabs[i]!;
-      tabBar += i === this.activeTab ? th.fg("accent", th.bold(`[${tab.name}]`)) : th.fg("dim", `[${tab.name}]`);
+      const marker = tab.dirty ? "*" : "";
+      tabBar += i === this.activeTab ? th.fg("accent", th.bold(`[${tab.name}${marker}]`)) : th.fg("dim", `[${tab.name}${marker}]`);
       if (i < this.opts.tabs.length - 1) tabBar += " ";
     }
     lines.push(row(tabBar));

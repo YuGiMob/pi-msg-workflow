@@ -43,7 +43,8 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm test"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.0",
