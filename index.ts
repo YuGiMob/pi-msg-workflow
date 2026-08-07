@@ -285,7 +285,7 @@ function notifyNavigationStatus(
 
 function notifyConfigErrors(ctx: ExtensionCommandContext, errors: string[]): void {
   if (errors.length > 0) {
-    ctx.ui.notify(["[pi-workflow]", ...errors].join("\n"), "warning");
+    ctx.ui.notify(["[pi-msg-workflow]", ...errors].join("\n"), "warning");
   }
 }
 

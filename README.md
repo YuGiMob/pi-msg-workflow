@@ -20,7 +20,7 @@ A [pi-coding-agent](https://github.com/badlogic/pi-mono/tree/main/packages/codin
 ## Installation
 
 ```bash
-pi install npm:pi-workflow
+pi install npm:pi-msg-workflow
 ```
 
 The package ships with default `messages.json` (`1`–`7`), `commands.json` (`1` = `git add .`) and `workflow.json`, so `/workflow` works out of the box.
