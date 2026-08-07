@@ -1,0 +1,9 @@
+{
+  "1": "Read the entirety of the codebase of this project to be able to understand it's architecture and coding standards accurately",
+  "2": "I want you to inform me about all of the improvements you can think of for this project",
+  "3": "Are these improvements actually adding value to the application? Are these really worth implementing?",
+  "4": "Implement all of the changes worth implementing",
+  "5": "I need you to take a look at the git status and git diff to validate that the changes you wanted to make, are the same as the changes you actually did",
+  "6": "I need you to take a closer look at all of the changes that I did with another agent in this codebase. You can see the changes via 'git diff --staged'",
+  "7": "If your review found any issues with the staged changes, fix them now"
+}
