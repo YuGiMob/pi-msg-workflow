@@ -6,7 +6,7 @@
   "main": "index.ts",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/YuGiMob/pi-workflow.git"
+    "url": "git+https://github.com/YuGiMob/pi-msg-workflow.git"
   },
   "author": "YuGiMob",
   "keywords": [
