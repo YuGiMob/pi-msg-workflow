@@ -305,6 +305,16 @@ describe("WorkflowTab", () => {
     expect(lines.join("\n")).toContain("cmd 1: git add .");
   });
 
+  it("shows the full message preview up to the window edge", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify(WORKFLOW_JSON);
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify({ ...MESSAGES, "1": "a".repeat(60) });
+    });
+    const lines = tab.render(78, 12);
+    expect(lines.join("\n")).toContain("a".repeat(60));
+  });
+
   it("truncates rows to the visible width for wide characters", () => {
     vi.mocked(visibleWidth).mockImplementation((s: string) => [...s].reduce((n, ch) => n + (ch.charCodeAt(0) > 0x2e7f ? 2 : 1), 0));
     try {
@@ -417,6 +427,36 @@ describe("MessagesTab", () => {
     tab.handleInput("\x1b[200~line one\nline two\x1b[201~");
     tab.handleInput("\r");
     expect(tab.draft["1"]).toBe("line one line two");
+  });
+
+  it("wraps long content across lines up to the window width", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify(WORKFLOW_JSON);
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify({ "1": "one two three four five six seven eight nine ten" });
+    });
+    const tab = new MessagesTab(theme as any, notify);
+    const lines = tab.render(30, 12);
+    const content = lines.join("\n");
+    expect(content).toContain("one two three");
+    expect(content).toContain("nine ten");
+    for (const line of lines) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(30);
+    }
+  });
+
+  it("keeps the selected entry visible when content wraps beyond the window", () => {
+    const long = "word ".repeat(50).trim();
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify(WORKFLOW_JSON);
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify({ "1": "short", "2": long, "3": "tail" });
+    });
+    const tab = new MessagesTab(theme as any, notify);
+    tab.handleInput("j");
+    tab.handleInput("j");
+    const lines = tab.render(40, 6);
+    expect(lines.join("\n")).toContain("3: tail");
   });
 });
 

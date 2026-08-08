@@ -24,7 +24,6 @@ interface InputState {
 }
 
 const CONTENT_HEIGHT = 24;
-const MAX_MESSAGE_PREVIEW = 40;
 const FLASH_MS = 2500;
 const PASTE_START = "\x1b[200~";
 const PASTE_END = "\x1b[201~";
@@ -40,6 +39,44 @@ function truncate(text: string, width: number): string {
     used += w;
   }
   return `${result}…`;
+}
+
+function wrapText(text: string, width: number): string[] {
+  if (visibleWidth(text) <= width) return [text];
+  const lines: string[] = [];
+  let current = "";
+  for (const word of text.split(/\s+/)) {
+    if (word === "") continue;
+    const candidate = current === "" ? word : `${current} ${word}`;
+    if (visibleWidth(candidate) <= width) {
+      current = candidate;
+      continue;
+    }
+    if (current !== "") {
+      lines.push(current);
+      current = "";
+    }
+    if (visibleWidth(word) > width) {
+      let rest = word;
+      while (rest !== "") {
+        let cut = 0;
+        let used = 0;
+        for (const ch of rest) {
+          const w = visibleWidth(ch);
+          if (used + w > width) break;
+          used += w;
+          cut++;
+        }
+        if (cut === 0) cut = 1;
+        lines.push(rest.slice(0, cut));
+        rest = rest.slice(cut);
+      }
+    } else {
+      current = word;
+    }
+  }
+  if (current !== "") lines.push(current);
+  return lines;
 }
 
 abstract class BaseEditorTab implements EditorTab {
@@ -368,7 +405,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     lines.push(th.fg("dim", ` Rounds: ${this.draft.rounds}   ([ ] to change)`));
     lines.push(th.fg("dim", " start"));
     this.draft.start.forEach((num, i) => {
-      const preview = messages[num] ? truncate(messages[num]!, MAX_MESSAGE_PREVIEW) : "(missing)";
+      const preview = messages[num] ? messages[num]! : "(missing)";
       row(`msg ${num}: ${preview}`, this.selection === i);
     });
     lines.push(th.fg("dim", " loop"));
@@ -378,7 +415,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       if (step.send !== undefined) {
         row(`send ${step.send}${step.onlyIfChanges ? " [if-changes]" : ""}`, selected);
       } else if (step.cmd !== undefined) {
-        const preview = commands[step.cmd] ? truncate(commands[step.cmd]!, MAX_MESSAGE_PREVIEW) : "(missing)";
+        const preview = commands[step.cmd] ? commands[step.cmd]! : "(missing)";
         row(`cmd ${step.cmd}: ${preview}`, selected);
       }
     });
@@ -391,6 +428,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
   readonly draft: Record<string, string>;
   readonly keys: string[];
   private selection = 0;
+  private scroll = 0;
 
   protected constructor(
     private readonly theme: Theme,
@@ -506,14 +544,31 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
     if (this.keys.length === 0) {
       lines.push(th.fg("dim", ` No ${this.noun.toLowerCase()}s yet - press a to add one`));
     }
+    const header = (key: string) => ` ${key}: `;
+    const entries: { text: string; selected: boolean }[] = [];
+    const keyOffsets: number[] = [0];
     for (let i = 0; i < this.keys.length; i++) {
       const key = this.keys[i]!;
-      const label = ` ${key}: ${truncate(this.draft[key]!, MAX_MESSAGE_PREVIEW)}`;
-      lines.push(
-        i === this.selection
-          ? th.bg("selectedBg", th.fg("text", truncate(label, innerWidth)))
-          : th.fg("text", truncate(label, innerWidth)),
-      );
+      const h = header(key);
+      const wrapped = wrapText(this.draft[key]!, Math.max(1, innerWidth - visibleWidth(h)));
+      keyOffsets.push(keyOffsets[keyOffsets.length - 1]! + wrapped.length);
+      for (let j = 0; j < wrapped.length; j++) {
+        entries.push({
+          text: (j === 0 ? h : " ".repeat(visibleWidth(h))) + wrapped[j]!,
+          selected: i === this.selection,
+        });
+      }
+    }
+    const total = keyOffsets[keyOffsets.length - 1]!;
+    const selStart = keyOffsets[this.selection] ?? total;
+    const selEnd = keyOffsets[this.selection + 1] ?? total;
+    if (selStart < this.scroll) this.scroll = selStart;
+    if (selEnd > this.scroll + height) this.scroll = selEnd - height;
+    this.scroll = Math.max(0, Math.min(this.scroll, Math.max(0, total - height)));
+    for (let i = this.scroll; i < Math.min(total, this.scroll + height); i++) {
+      const entry = entries[i]!;
+      const text = truncate(entry.text, innerWidth);
+      lines.push(entry.selected ? th.bg("selectedBg", th.fg("text", text)) : th.fg("text", text));
     }
     while (lines.length < height) lines.push(th.fg("dim", "~"));
     return lines.slice(0, height);
