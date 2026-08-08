@@ -97,6 +97,7 @@ function registerChangeCommand(
   read: () => Record<string, string>,
   write: (store: Record<string, string>) => void,
   noun: string,
+  fileLabel: string,
 ): void {
   pi.registerCommand(`change-${name}`, {
     description: `Change or create a predefined ${noun.toLowerCase()}`,
@@ -123,7 +124,12 @@ function registerChangeCommand(
       }
       const store = read();
       store[num] = content;
-      write(store);
+      try {
+        write(store);
+      } catch (err) {
+        ctx.ui.notify(`Could not save ${fileLabel}: ${err instanceof Error ? err.message : String(err)}`, "error");
+        return;
+      }
       ctx.ui.notify(`${noun} ${num} updated`, "info");
     },
   });
@@ -233,6 +239,8 @@ async function runCommand(
     const result = await pi.exec(parts[0]!, parts.slice(1));
     if (result.code !== 0) return { ok: false, reason: "failed", stderr: result.stderr };
     return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: "failed", stderr: err instanceof Error ? err.message : String(err) };
   } finally {
     ui.setWorkingMessage();
   }
@@ -269,23 +277,36 @@ function countLeadingPhaseMatches(entries: SessionEntry[], expected: string[]): 
 
 function findAnchorAfterMessage(entries: SessionEntry[], messageText: string): SessionEntry | undefined {
   let firstUserIndex = -1;
-  let messageIndex = -1;
+  const messageIndices: number[] = [];
   for (let i = 0; i < entries.length; i++) {
     const text = userMessageText(entries[i]);
     if (text === undefined) continue;
     if (firstUserIndex === -1) firstUserIndex = i;
-    if (messageIndex === -1 && text === messageText) messageIndex = i;
+    if (text === messageText) messageIndices.push(i);
   }
-  const anchorIndex = messageIndex !== -1 ? messageIndex : firstUserIndex;
-  if (anchorIndex === -1) return undefined;
-  for (let i = anchorIndex + 1; i < entries.length; i++) {
+  for (let i = messageIndices.length - 1; i >= 0; i--) {
+    const anchorIndex = messageIndices[i]!;
+    let nextUserIndex = -1;
+    for (let j = anchorIndex + 1; j < entries.length; j++) {
+      if (userMessageText(entries[j]) !== undefined) {
+        nextUserIndex = j;
+        break;
+      }
+    }
+    if (nextUserIndex === -1) {
+      const last = entries[entries.length - 1];
+      if (last !== undefined && userMessageText(last) === undefined) return last;
+      continue;
+    }
+    if (nextUserIndex > anchorIndex + 1) return entries[nextUserIndex - 1];
+  }
+  if (firstUserIndex === -1) return undefined;
+  for (let i = firstUserIndex + 1; i < entries.length; i++) {
     if (userMessageText(entries[i]) !== undefined) {
       return entries[i - 1];
     }
   }
-  if (messageIndex === -1) return undefined;
-  const last = entries[entries.length - 1];
-  return last !== undefined && userMessageText(last) === undefined ? last : undefined;
+  return undefined;
 }
 
 function countUserTextMatches(entries: SessionEntry[], text: string): number {
@@ -361,10 +382,10 @@ function notifyConfigErrors(ctx: ExtensionCommandContext, errors: string[]): voi
 
 export default function (pi: ExtensionAPI) {
   registerSendCommand(pi, "msg");
-  registerChangeCommand(pi, "msg", getMessages, setMessages, "Message");
+  registerChangeCommand(pi, "msg", getMessages, setMessages, "Message", "messages.json");
   registerShowCommand(pi, "msg", getMessages, "Message");
   registerPerformCommand(pi, "cmd");
-  registerChangeCommand(pi, "cmd", getCommands, setCommands, "Command");
+  registerChangeCommand(pi, "cmd", getCommands, setCommands, "Command", "commands.json");
   registerShowCommand(pi, "cmd", getCommands, "Command");
 
   pi.registerCommand("workflow-edit", {
@@ -451,7 +472,21 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("The first step of the loop must be a tree step (context reset)", "error");
         return;
       }
-      const rounds = parseRounds(args, config.rounds);
+      const tokens = args.trim().split(/\s+/).filter(Boolean);
+      const dryRun = tokens.some((token) => token === "dry" || token === "--dry-run");
+      const rounds = parseRounds(tokens.find((token) => /^\d+$/.test(token)) ?? "", config.rounds);
+      if (dryRun) {
+        const startText = config.start.length > 0 ? config.start.join(", ") : "(none)";
+        const loopText = config.loop
+          .map((step) => {
+            if (step.tree !== undefined) return `tree ${step.tree}`;
+            if (step.cmd !== undefined) return `cmd ${step.cmd}`;
+            return `send ${step.send}${step.onlyIfChanges ? " (if-changes)" : ""}`;
+          })
+          .join(", ");
+        ctx.ui.notify(`[pi-msg-workflow] Dry run: ${rounds} round${rounds === 1 ? "" : "s"}\nstart: ${startText}\nloop: ${loopText}`, "info");
+        return;
+      }
       workflowStopRequested = false;
       try {
         ctx.ui.setWorkingMessage("Waiting for queued messages to complete...");

@@ -141,6 +141,16 @@ describe("messages extension", () => {
       expect(Object.keys(written)).toEqual(["1", "2", "3"]);
     });
 
+    it("reports a failed write", async () => {
+      vi.mocked(writeFileSync).mockImplementationOnce(() => {
+        throw new Error("disk full");
+      });
+      const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
+      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
+      await cmd.cmd.handler('3 "New test message"', ctx);
+      expect(ctx.ui.notify).toHaveBeenCalledWith("Could not save messages.json: disk full", "error");
+    });
+
     it("shows warning for short messages", async () => {
       const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
       const ctx = { hasUI: true, ui: { notify: vi.fn() } };
@@ -243,6 +253,16 @@ describe("messages extension", () => {
 
       await cmd.cmd.handler("1", ctx);
 
+      expect(ctx.ui.notify).toHaveBeenCalledWith("Command 1 failed: boom", "error");
+    });
+
+    it("reports a command that throws during execution", async () => {
+      pi.exec = vi.fn(async () => {
+        throw new Error("boom");
+      });
+      const cmd = capturedCommands.find((c: any) => c.name === "cmd");
+      const ctx = { hasUI: true, ui: { notify: vi.fn(), setWorkingMessage: vi.fn() } };
+      await cmd.cmd.handler("1", ctx);
       expect(ctx.ui.notify).toHaveBeenCalledWith("Command 1 failed: boom", "error");
     });
 

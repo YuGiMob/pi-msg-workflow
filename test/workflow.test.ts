@@ -255,6 +255,62 @@ describe("workflow extension", () => {
     expect(pi.exec).toHaveBeenCalledTimes(15);
   });
 
+  it("dry run prints the plan without sending or executing anything", async () => {
+    const ctx = createCtx([]);
+    await commands["workflow"].handler("dry", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Dry run: 2 rounds"), "info");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("start: 1, 2, 3, 4, 5"), "info");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("tree 1"), "info");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("send 5 (if-changes)"), "info");
+    expect(pi.sendUserMessage).not.toHaveBeenCalled();
+    expect(ctx.navigateTree).not.toHaveBeenCalled();
+    expect(pi.exec).not.toHaveBeenCalled();
+  });
+
+  it("dry run accepts --dry-run and a rounds argument", async () => {
+    const ctx = createCtx([]);
+    await commands["workflow"].handler("3 --dry-run", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Dry run: 3 rounds"), "info");
+    expect(pi.sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it("dry run still validates missing messages", async () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify(holder.workflow);
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify({ "1": MSG1, "2": MSG2 });
+    });
+    const ctx = createCtx([]);
+    await commands["workflow"].handler("dry", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Missing messages"), "error");
+    expect(pi.sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it("reports a command that throws during execution", async () => {
+    pi.exec = vi.fn(async () => {
+      throw new Error("boom");
+    });
+    const ctx = createCtx(fullPhaseA());
+    await commands["workflow"].handler("", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Command 1 failed: boom", "error");
+    expect(ctx.navigateTree).toHaveBeenCalledTimes(1);
+  });
+
+  it("anchors the tree step to the most recent occurrence of the message", async () => {
+    const entries = [
+      ...fullPhaseA(),
+      userEntry("u6", MSG6),
+      assistantEntry("a6"),
+      userEntry("u7", MSG7),
+      assistantEntry("a7"),
+      userEntry("u8", MSG1),
+      assistantEntry("a8"),
+    ];
+    const ctx = createCtx(entries);
+    await commands["workflow"].handler("", ctx);
+    expect(ctx.navigateTree).toHaveBeenCalledWith("a8", { summarize: false });
+  });
+
   it("aborts when a command fails", async () => {
     pi.exec = vi.fn(async () => ({ code: 1, stdout: "", stderr: "boom" }));
     const ctx = createCtx(fullPhaseA());
@@ -563,6 +619,43 @@ describe("/tree-jump command", () => {
 
   it("anchors to the response when the message is the last user message", async () => {
     const ctx = createCtx([userEntry("u1", MSG1), assistantEntry("a1")]);
+    await commands["tree-jump"].handler("1", ctx);
+    expect(ctx.navigateTree).toHaveBeenCalledWith("a1", { summarize: false });
+  });
+
+  it("anchors to the response of the last occurrence of the message", async () => {
+    const entries = [
+      userEntry("u1", MSG1),
+      assistantEntry("a1"),
+      userEntry("u2", MSG2),
+      assistantEntry("a2"),
+      userEntry("u3", MSG1),
+      assistantEntry("a3"),
+    ];
+    const ctx = createCtx(entries);
+    await commands["tree-jump"].handler("1", ctx);
+    expect(ctx.navigateTree).toHaveBeenCalledWith("a3", { summarize: false });
+  });
+
+  it("falls back to the previous response when the last occurrence has no response yet", async () => {
+    const entries = [
+      userEntry("u1", MSG1),
+      assistantEntry("a1"),
+      userEntry("u2", MSG1),
+    ];
+    const ctx = createCtx(entries);
+    await commands["tree-jump"].handler("1", ctx);
+    expect(ctx.navigateTree).toHaveBeenCalledWith("a1", { summarize: false });
+  });
+
+  it("falls back to the previous response when the last occurrence is followed by another user message", async () => {
+    const entries = [
+      userEntry("u1", MSG1),
+      assistantEntry("a1"),
+      userEntry("u2", MSG1),
+      userEntry("u3", MSG2),
+    ];
+    const ctx = createCtx(entries);
     await commands["tree-jump"].handler("1", ctx);
     expect(ctx.navigateTree).toHaveBeenCalledWith("a1", { summarize: false });
   });

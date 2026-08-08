@@ -8,7 +8,7 @@ A [pi-coding-agent](https://github.com/badlogic/pi-mono/tree/main/packages/codin
 - **`/change-msg <number> "<content>"`** / **`/show-msg [number]`** — create, update and list messages (min 5 chars).
 - **`/cmd <number>`** — perform a predefined command (e.g. `git add .` is executed via `pi.exec`).
 - **`/change-cmd <number> "<content>"`** / **`/show-cmd [number]`** — create, update and list commands.
-- **`/workflow [rounds]`** — runs the configured workflow: a start phase (analysis messages), then review rounds. The whole sequence is defined in `workflow.json`, so you decide which messages or commands happen when.
+- **`/workflow [rounds]`** — runs the configured workflow: a start phase (analysis messages), then review rounds. The whole sequence is defined in `workflow.json`, so you decide which messages or commands happen when. `/workflow dry` prints the resolved plan without running it.
 - **`/workflow-edit`** — opens an interactive editor overlay with three tabs: **[Workflow]** (rounds, start order, loop steps, tree anchor, add/delete/reorder, if-changes toggle), **[Messages]** and **[Commands]** (add, edit and delete store entries). Changes are saved with `s` (per tab) and closing with unsaved changes asks for confirmation.
 - **`/tree-jump <number>`** — resets the agent's context to the response of a predefined message (by its index). The workflow loop always begins with a tree step.
 - **`/workflow-stop`** — cancels a running workflow after the current step completes.
@@ -34,6 +34,7 @@ The package ships with default `messages.json` (`1`–`7`), `commands.json` (`1`
 /cmd 1
 /workflow
 /workflow 3
+/workflow dry
 /tree-jump 1
 /workflow-edit
 /workflow-stop
@@ -54,7 +55,7 @@ The package ships with default `messages.json` (`1`–`7`), `commands.json` (`1`
 | `s` | save the active tab |
 | `q` / `Esc` | close (asks for confirmation when there are unsaved changes) |
 
-Saving the Workflow tab refuses indices that reference missing messages or commands, so add those in the Messages/Commands tabs first. Saving the Messages and Commands tabs refuses to delete entries still referenced by the workflow, so drop those references in the Workflow tab first. The tree step is fixed as the first loop step — only its anchor index is editable.
+Saving the Workflow tab refuses indices that reference missing messages or commands, so add and save those in the Messages/Commands tabs first. Saving the Messages and Commands tabs refuses to delete entries still referenced by the workflow, so drop and save those references in the Workflow tab first. The tree step is fixed as the first loop step — only its anchor index is editable.
 
 ## Configuration
 
@@ -77,7 +78,7 @@ The workflow is defined in `workflow.json` inside the package:
 
 ### `rounds`
 
-Number of review-loop iterations (default `2`, max `5`). `/workflow <n>` overrides it for a single run.
+Number of review-loop iterations (default `2`, max `5`). `/workflow <n>` overrides it for a single run. `/workflow dry` (or `/workflow --dry-run`) prints the resolved plan — rounds, start messages and loop steps — without sending or executing anything.
 
 ### `start`
 

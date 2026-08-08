@@ -330,14 +330,14 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     ];
     const missing = [...new Set(indices)].filter((num) => !messages[num]);
     if (missing.length > 0) {
-      this.setFlash(`Missing messages: ${missing.join(", ")} - add them in the Messages tab first`);
+      this.setFlash(`Missing messages: ${missing.join(", ")} - add and save them in the Messages tab first`);
       return;
     }
     const commands = getCommands();
     const cmdIndices = this.draft.loop.flatMap((step) => (step.cmd !== undefined ? [step.cmd] : []));
     const missingCommands = [...new Set(cmdIndices)].filter((num) => !commands[num]);
     if (missingCommands.length > 0) {
-      this.setFlash(`Missing commands: ${missingCommands.join(", ")} - add them in the Commands tab first`);
+      this.setFlash(`Missing commands: ${missingCommands.join(", ")} - add and save them in the Commands tab first`);
       return;
     }
     const config: WorkflowConfig = {
@@ -486,7 +486,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
     const { config } = getWorkflowConfig();
     const removed = this.referenced(config).filter((num) => this.draft[num] === undefined);
     if (removed.length > 0) {
-      this.setFlash(`${this.noun}s still used by the workflow: ${removed.join(", ")} - remove them in the Workflow tab first`);
+      this.setFlash(`${this.noun}s still used by the workflow: ${removed.join(", ")} - remove and save them in the Workflow tab first`);
       return;
     }
     try {
@@ -574,6 +574,11 @@ export class WorkflowEditorOverlay {
   }
 
   handleInput(data: string): void {
+    const consumed = this.active.handleInput(data);
+    if (consumed) {
+      this.confirmingClose = false;
+      return;
+    }
     if (matchesKey(data, Key.tab)) {
       this.activeTab = (this.activeTab + 1) % this.opts.tabs.length;
       this.confirmingClose = false;
@@ -581,11 +586,6 @@ export class WorkflowEditorOverlay {
     }
     if (matchesKey(data, Key.shift("tab"))) {
       this.activeTab = (this.activeTab - 1 + this.opts.tabs.length) % this.opts.tabs.length;
-      this.confirmingClose = false;
-      return;
-    }
-    const consumed = this.active.handleInput(data);
-    if (consumed) {
       this.confirmingClose = false;
       return;
     }

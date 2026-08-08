@@ -266,7 +266,7 @@ describe("WorkflowTab", () => {
     tab.handleInput("\r");
     tab.save();
     expect(writeFileSync).not.toHaveBeenCalled();
-    expect(tab.getAboveContentLine(80)).toContain("Missing messages: 99");
+    expect(tab.getAboveContentLine(80)).toContain("Missing messages: 99 - add and save them in the Messages tab first");
     expect(tab.dirty).toBe(true);
   });
 
@@ -277,7 +277,7 @@ describe("WorkflowTab", () => {
     tab.handleInput("\r");
     tab.save();
     expect(writeFileSync).not.toHaveBeenCalled();
-    expect(tab.getAboveContentLine(80)).toContain("Missing commands: 9");
+    expect(tab.getAboveContentLine(80)).toContain("Missing commands: 9 - add and save them in the Commands tab first");
     expect(tab.dirty).toBe(true);
   });
 
@@ -392,7 +392,7 @@ describe("MessagesTab", () => {
     tab.handleInput("x");
     tab.save();
     expect(writeFileSync).not.toHaveBeenCalled();
-    expect(tab.getAboveContentLine(80)).toContain("still used by the workflow");
+    expect(tab.getAboveContentLine(80)).toContain("Messages still used by the workflow: 1 - remove and save them in the Workflow tab first");
     expect(tab.dirty).toBe(true);
   });
 
@@ -488,7 +488,7 @@ describe("CommandsTab", () => {
     tab.handleInput("x");
     tab.save();
     expect(writeFileSync).not.toHaveBeenCalled();
-    expect(tab.getAboveContentLine(80)).toContain("still used by the workflow");
+    expect(tab.getAboveContentLine(80)).toContain("Commands still used by the workflow: 1 - remove and save them in the Workflow tab first");
     expect(tab.dirty).toBe(true);
   });
 });
@@ -537,6 +537,12 @@ describe("WorkflowEditorOverlay", () => {
     overlay.handleInput("\t");
     expect((overlay as any).activeTab).toBe(1);
     overlay.handleInput("\x1b[Z");
+    expect((overlay as any).activeTab).toBe(0);
+  });
+
+  it("does not switch tabs while typing in an input", () => {
+    workflowTab.handleInput("e");
+    overlay.handleInput("\t");
     expect((overlay as any).activeTab).toBe(0);
   });
 
