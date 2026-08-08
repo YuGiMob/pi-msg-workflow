@@ -81,9 +81,8 @@ export function getWorkflowConfig(): { config: WorkflowConfig; errors: string[] 
 
   let rounds = DEFAULT_ROUNDS;
   if (input.rounds !== undefined) {
-    const parsed = Number(input.rounds);
-    if (Number.isInteger(parsed) && parsed >= 1 && parsed <= MAX_ROUNDS) {
-      rounds = parsed;
+    if (typeof input.rounds === "number" && Number.isInteger(input.rounds) && input.rounds >= 1 && input.rounds <= MAX_ROUNDS) {
+      rounds = input.rounds;
     } else {
       errors.push(`Invalid rounds "${String(input.rounds)}" - defaulting to ${DEFAULT_ROUNDS}.`);
     }

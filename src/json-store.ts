@@ -18,7 +18,16 @@ export function createJsonStore(fileName: string): {
       }
     },
     set(store) {
-      const sorted = Object.fromEntries(Object.entries(store).sort(([a], [b]) => Number(a) - Number(b)));
+      const sorted = Object.fromEntries(
+        Object.entries(store).sort(([a], [b]) => {
+          const na = Number(a);
+          const nb = Number(b);
+          if (Number.isNaN(na) && Number.isNaN(nb)) return a.localeCompare(b);
+          if (Number.isNaN(na)) return 1;
+          if (Number.isNaN(nb)) return -1;
+          return na - nb;
+        }),
+      );
       const tmp = `${file}.tmp`;
       writeFileSync(tmp, JSON.stringify(sorted, null, 2), "utf-8");
       renameSync(tmp, file);

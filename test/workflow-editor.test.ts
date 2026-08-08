@@ -517,6 +517,19 @@ describe("MessagesTab", () => {
     expect(tab.keys).toContain("9");
   });
 
+  it("adds a message after non-numeric keys", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify(WORKFLOW_JSON);
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify({ "1": "first", "abc": "other" });
+    });
+    const tab = new MessagesTab(theme as any, notify);
+    tab.handleInput("a");
+    type(tab, "Brand new message");
+    tab.handleInput("\r");
+    expect(tab.draft["2"]).toBe("Brand new message");
+  });
+
   it("deletes a message", () => {
     tab.handleInput("x");
     expect(tab.draft["1"]).toBeUndefined();

@@ -12,7 +12,7 @@ A [pi-coding-agent](https://github.com/badlogic/pi-mono/tree/main/packages/codin
 - **`/workflow-edit`** — opens an interactive editor overlay with three tabs: **[Workflow]** (rounds, start/loop/finally steps, tree anchor, add/delete/reorder, if-changes toggle), **[Messages]** and **[Commands]** (add, edit and delete store entries). Changes are saved with `s` (per tab) and closing with unsaved changes asks for confirmation.
 - **`/tree-jump <number>`** — resets the agent's context to the response of a predefined message (by its index). The workflow loop always begins with a tree step.
 - **`/workflow-stop`** — cancels a running workflow after the current step completes.
-- **Start-phase resume.** msg steps whose text is already present in the session branch are skipped, so an interrupted workflow continues where it left off.
+- **Start-phase resume.** msg steps whose text matches the leading user messages of the session are skipped, so an interrupted workflow continues where it left off.
 - **Resilient sends.** Follow-ups are polled until they appear in the session branch (up to 3 attempts) before waiting for idle.
 - **Config validation.** Invalid `workflow.json` values are reported and fall back to safe defaults.
 - **Autocomplete.** Press Tab after `/msg `, `/cmd ` or `/change-msg ` to pick a number.
@@ -111,7 +111,14 @@ Message indices refer to the numbered message store — `/msg 6` and `{ "msg": "
 Ordered list of steps run once after the loop finishes. Each step is `{ "msg": "n" }` (send message n) or `{ "cmd": "n" }` (perform command n). The default config ends with a summary of all changes since the last commit.
 Command content is split on whitespace; single- and double-quoted arguments are supported (e.g. `git commit -m "fix"`), with `\"` and `\\` escapes inside double quotes. Unterminated quotes are rejected.
 
-Invalid config values are reported with a `[pi-workflow]` warning and fall back to the defaults shown above.
+Invalid config values are reported with a `[pi-msg-workflow]` warning and fall back to the defaults shown above.
+
+## Limitations
+
+- **No shell operators.** Command content is split on whitespace (single- and double-quoted arguments supported) and executed directly — pipes, `&&`, `||` and redirection are not supported. Use one command per step or a script.
+- **Quotes in `/change-msg` and `/change-cmd`.** Content containing double quotes must be wrapped in single quotes, e.g. `/change-msg 3 'say "hi"'`. Escaped quotes are only supported inside stored command content, not in the change commands.
+- **Text-based resume.** The start phase skips msg steps whose text matches the leading user messages of the session, in order, stopping at the first non-matching user message. A message you typed manually with identical text counts as already sent. cmd steps always re-run.
+- **One workflow at a time.** `/workflow` refuses to start while another workflow is running. `/workflow-stop` reports when no workflow is running.
 
 ## Development
 

@@ -138,6 +138,17 @@ describe("workflow extension", () => {
     vi.clearAllMocks();
   });
 
+  function blockSendsOf(text: string): void {
+    pi.sendUserMessage = vi.fn((content: string) => {
+      if (content !== text) {
+        const id = String(holder.branch.length);
+        holder.branch.push(userEntry(`u${id}`, content));
+        holder.branch.push(assistantEntry(`a${id}`));
+        holder.state.active = true;
+      }
+    });
+  }
+
   it("registers the workflow, tree-jump and workflow-stop commands", () => {
     expect(commands["workflow"]).toBeDefined();
     expect(commands["tree-jump"]).toBeDefined();
@@ -218,6 +229,19 @@ describe("workflow extension", () => {
     await commands["workflow"].handler("", ctx);
     const sent = pi.sendUserMessage.mock.calls.map((c: any[]) => c[0]);
     expect(sent).toEqual([MSG3, MSG4, MSG5, MSG6, MSG7, MSG6, MSG7, MSG8]);
+  });
+
+  it("does not skip start messages preceded by unrelated conversation", async () => {
+    const entries = [
+      userEntry("x1", "unrelated conversation"),
+      assistantEntry("x2"),
+      userEntry("x3", MSG1),
+      assistantEntry("x4"),
+    ];
+    const ctx = createCtx(entries);
+    await commands["workflow"].handler("", ctx);
+    const sent = pi.sendUserMessage.mock.calls.map((c: any[]) => c[0]);
+    expect(sent).toEqual([MSG1, MSG2, MSG3, MSG4, MSG5, MSG6, MSG7, MSG6, MSG7, MSG8]);
   });
 
   it("runs cmd steps in the start phase", async () => {
@@ -509,14 +533,7 @@ describe("workflow extension", () => {
   it("retries and reports failure when a message cannot be sent", async () => {
     vi.useFakeTimers();
     try {
-      pi.sendUserMessage = vi.fn((content: string) => {
-        if (content !== MSG7) {
-          const id = String(holder.branch.length);
-          holder.branch.push(userEntry(`u${id}`, content));
-          holder.branch.push(assistantEntry(`a${id}`));
-          holder.state.active = true;
-        }
-      });
+      blockSendsOf(MSG7);
       const ctx = createCtx(fullPhaseA());
       const handlerPromise = commands["workflow"].handler("", ctx);
       await vi.advanceTimersByTimeAsync(16_000);
@@ -583,22 +600,67 @@ describe("workflow extension", () => {
   });
 
   it("workflow-stop requests cancellation", async () => {
+    vi.useFakeTimers();
+    try {
+      blockSendsOf(MSG6);
+      const ctx = createCtx(fullPhaseA());
+      const handlerPromise = commands["workflow"].handler("", ctx);
+      await vi.advanceTimersByTimeAsync(100);
+      await commands["workflow-stop"].handler("", ctx);
+      expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("stop after the current step"), "info");
+      await vi.advanceTimersByTimeAsync(100);
+      await handlerPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("workflow-stop reports when no workflow is running", async () => {
     const ctx = createCtx();
     await commands["workflow-stop"].handler("", ctx);
-    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("stop after the current step"), "info");
+    expect(ctx.ui.notify).toHaveBeenCalledWith("No workflow is currently running", "info");
+  });
+
+  it("refuses to start while another workflow is running", async () => {
+    vi.useFakeTimers();
+    try {
+      blockSendsOf(MSG6);
+      const ctx = createCtx(fullPhaseA());
+      const first = commands["workflow"].handler("", ctx);
+      await vi.advanceTimersByTimeAsync(100);
+      await commands["workflow"].handler("", ctx);
+      expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("already running"), "warning");
+      await commands["workflow-stop"].handler("", ctx);
+      await vi.advanceTimersByTimeAsync(100);
+      await first;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports an already-running workflow before config validation", async () => {
+    vi.useFakeTimers();
+    try {
+      blockSendsOf(MSG6);
+      const ctx = createCtx(fullPhaseA());
+      const first = commands["workflow"].handler("", ctx);
+      await vi.advanceTimersByTimeAsync(100);
+      vi.mocked(readFileSync).mockReturnValue("not json" as never);
+      await commands["workflow"].handler("", ctx);
+      expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("already running"), "warning");
+      expect(ctx.ui.notify).not.toHaveBeenCalledWith(expect.stringContaining("workflow.json"), "warning");
+      await commands["workflow-stop"].handler("", ctx);
+      await vi.advanceTimersByTimeAsync(100);
+      await first;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("stops the workflow when cancellation is requested during a send", async () => {
     vi.useFakeTimers();
     try {
-      pi.sendUserMessage = vi.fn((content: string) => {
-        if (content !== MSG6) {
-          const id = String(holder.branch.length);
-          holder.branch.push(userEntry(`u${id}`, content));
-          holder.branch.push(assistantEntry(`a${id}`));
-          holder.state.active = true;
-        }
-      });
+      blockSendsOf(MSG6);
       const ctx = createCtx(fullPhaseA());
       const handlerPromise = commands["workflow"].handler("", ctx);
       await vi.advanceTimersByTimeAsync(100);
@@ -775,6 +837,14 @@ describe("getWorkflowConfig", () => {
   it("falls back on invalid rounds", () => {
     vi.mocked(existsSync).mockReturnValue(true);
     vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ rounds: 99 }) as never);
+    const { config, errors } = getWorkflowConfig();
+    expect(config.rounds).toBe(2);
+    expect(errors.some((e) => e.includes("rounds"))).toBe(true);
+  });
+
+  it("rejects boolean rounds", () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ rounds: true }) as never);
     const { config, errors } = getWorkflowConfig();
     expect(config.rounds).toBe(2);
     expect(errors.some((e) => e.includes("rounds"))).toBe(true);

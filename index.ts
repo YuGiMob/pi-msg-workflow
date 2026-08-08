@@ -3,6 +3,7 @@ import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { getMessages, setMessages } from "./src/messages.js";
 import { getCommands, setCommands } from "./src/commands.js";
 import { MAX_ROUNDS } from "./src/constants.js";
+import { runCommand, commandFailureMessage } from "./src/command-runner.js";
 import { getWorkflowConfig, referencedIndices, referencedCommands, type StartStep } from "./src/workflow-config.js";
 import { WorkflowEditorOverlay, WorkflowTab, MessagesTab, CommandsTab, type EditorTab } from "./src/workflow-editor.js";
 
@@ -21,6 +22,7 @@ const SEND_MAX_ATTEMPTS = 3;
 const SEND_POLL_INTERVAL_MS = 25;
 
 let workflowStopRequested = false;
+let workflowRunning = false;
 
 function storeCompletions(store: Record<string, string>, noun: string, prefix: string): AutocompleteItem[] {
   const items = Object.keys(store).map((num) => ({
@@ -77,13 +79,7 @@ function registerPerformCommand(pi: ExtensionAPI, name: string): void {
       }
       const result = await runCommand(pi, command, `Running ${command}...`, ctx.ui);
       if (!result.ok) {
-        if (result.reason === "empty") {
-          ctx.ui.notify(`Command ${num} is empty.`, "warning");
-        } else if (result.reason === "unterminated") {
-          ctx.ui.notify(`Command ${num} has an unterminated quote.`, "warning");
-        } else {
-          ctx.ui.notify(`Command ${num} failed: ${result.stderr}`, "error");
-        }
+        ctx.ui.notify(commandFailureMessage(num, result), result.reason === "failed" ? "error" : "warning");
         return;
       }
       ctx.ui.notify(`Command ${num} executed`, "info");
@@ -179,73 +175,6 @@ function parseRounds(args: string, fallback: number): number {
   return Math.min(value, MAX_ROUNDS);
 }
 
-type CommandResult = { ok: true } | { ok: false; reason: "empty" | "unterminated" | "failed"; stderr: string };
-
-function splitCommand(command: string): string[] | null {
-  const parts: string[] = [];
-  let current = "";
-  let started = false;
-  let quote: string | null = null;
-  const text = command.trim();
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (quote !== null) {
-      if (ch === "\\" && quote === '"') {
-        const next = text[i + 1];
-        if (next === '"' || next === "\\") {
-          current += next;
-          started = true;
-          i++;
-        } else {
-          current += ch;
-          started = true;
-        }
-      } else if (ch === quote) {
-        quote = null;
-      } else {
-        current += ch;
-        started = true;
-      }
-    } else if (ch === '"' || ch === "'") {
-      quote = ch;
-      started = true;
-    } else if (/\s/.test(ch)) {
-      if (started) {
-        parts.push(current);
-        current = "";
-        started = false;
-      }
-    } else {
-      current += ch;
-      started = true;
-    }
-  }
-  if (quote !== null) return null;
-  if (started) parts.push(current);
-  return parts;
-}
-
-async function runCommand(
-  pi: ExtensionAPI,
-  command: string,
-  workingText: string,
-  ui: { setWorkingMessage(message?: string): void },
-): Promise<CommandResult> {
-  const parts = splitCommand(command);
-  if (parts === null) return { ok: false, reason: "unterminated", stderr: "" };
-  if (parts.length === 0 || parts[0] === "") return { ok: false, reason: "empty", stderr: "" };
-  ui.setWorkingMessage(workingText);
-  try {
-    const result = await pi.exec(parts[0]!, parts.slice(1));
-    if (result.code !== 0) return { ok: false, reason: "failed", stderr: result.stderr };
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, reason: "failed", stderr: err instanceof Error ? err.message : String(err) };
-  } finally {
-    ui.setWorkingMessage();
-  }
-}
-
 async function runStoredCommand(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
@@ -259,13 +188,7 @@ async function runStoredCommand(
   }
   const result = await runCommand(pi, command, `${prefix}${command}...`, ctx.ui);
   if (!result.ok) {
-    if (result.reason === "empty") {
-      ctx.ui.notify(`Command ${num} is empty.`, "error");
-    } else if (result.reason === "unterminated") {
-      ctx.ui.notify(`Command ${num} has an unterminated quote.`, "error");
-    } else {
-      ctx.ui.notify(`Command ${num} failed: ${result.stderr}`, "error");
-    }
+    ctx.ui.notify(commandFailureMessage(num, result), "error");
     return false;
   }
   return true;
@@ -339,13 +262,15 @@ function countLeadingPhaseMatches(entries: SessionEntry[], expected: string[]): 
   let matched = 0;
   for (const entry of entries) {
     const text = userMessageText(entry);
-    if (text !== undefined && matched < expected.length && text === expected[matched]) {
+    if (text === undefined) continue;
+    if (matched < expected.length && text === expected[matched]) {
       matched++;
+    } else {
+      break;
     }
   }
   return matched;
 }
-
 function findAnchorAfterMessage(entries: SessionEntry[], messageText: string): SessionEntry | undefined {
   let firstUserIndex = -1;
   const messageIndices: number[] = [];
@@ -511,6 +436,10 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("/workflow-stop requires interactive mode", "error");
         return;
       }
+      if (!workflowRunning) {
+        ctx.ui.notify("No workflow is currently running", "info");
+        return;
+      }
       workflowStopRequested = true;
       ctx.ui.notify("Workflow stop requested - it will stop after the current step", "info");
     },
@@ -522,6 +451,12 @@ export default function (pi: ExtensionAPI) {
     handler: async (args, ctx: ExtensionCommandContext) => {
       if (!ctx.hasUI) {
         ctx.ui.notify("/workflow requires interactive mode", "error");
+        return;
+      }
+      const tokens = args.trim().split(/\s+/).filter(Boolean);
+      const dryRun = tokens.some((token) => token === "dry" || token === "--dry-run");
+      if (!dryRun && workflowRunning) {
+        ctx.ui.notify("A workflow is already running - use /workflow-stop to cancel it", "warning");
         return;
       }
       const messages = getMessages();
@@ -542,8 +477,6 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("The first step of the loop must be a tree step (context reset)", "error");
         return;
       }
-      const tokens = args.trim().split(/\s+/).filter(Boolean);
-      const dryRun = tokens.some((token) => token === "dry" || token === "--dry-run");
       const rounds = parseRounds(tokens.find((token) => /^\d+$/.test(token)) ?? "", config.rounds);
       if (dryRun) {
         const startText = config.start.length > 0
@@ -562,6 +495,7 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`[pi-msg-workflow] Dry run: ${rounds} round${rounds === 1 ? "" : "s"}\nstart: ${startText}\nloop: ${loopText}\nfinally: ${finallyText}`, "info");
         return;
       }
+      workflowRunning = true;
       workflowStopRequested = false;
       try {
         ctx.ui.setWorkingMessage("Waiting for queued messages to complete...");
@@ -601,6 +535,7 @@ export default function (pi: ExtensionAPI) {
         if (!(await runOncePhase(pi, ctx, config.finally, messages, 0))) return;
         ctx.ui.notify(`Workflow complete: ${rounds} round${rounds === 1 ? "" : "s"}`, "info");
       } finally {
+        workflowRunning = false;
         ctx.ui.setWorkingMessage();
       }
     },

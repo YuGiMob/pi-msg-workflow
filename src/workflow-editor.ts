@@ -528,7 +528,10 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
   }
 
   private nextKey(): string {
-    const max = this.keys.reduce((maxKey, key) => Math.max(maxKey, Number(key)), 0);
+    const max = this.keys.reduce((maxKey, key) => {
+      const n = Number(key);
+      return Number.isNaN(n) ? maxKey : Math.max(maxKey, n);
+    }, 0);
     return String(max + 1);
   }
 
