@@ -405,7 +405,6 @@ export default function (pi: ExtensionAPI) {
         ];
         return new WorkflowEditorOverlay({
           title: "Workflow Editor",
-          subtitle: "workflow.json · messages.json · commands.json",
           tabs,
           theme,
           done,

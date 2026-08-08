@@ -1,5 +1,5 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
+import { Key, decodeKittyPrintable, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
 import { getMessages, setMessages } from "./messages.js";
 import { getCommands, setCommands } from "./commands.js";
 import { MAX_ROUNDS } from "./constants.js";
@@ -119,6 +119,11 @@ abstract class BaseEditorTab implements EditorTab {
       this.input.buffer += data.slice(PASTE_START.length, -PASTE_END.length).replace(/[\r\n]+/g, " ");
       return true;
     }
+    const kittyPrintable = decodeKittyPrintable(data);
+    if (kittyPrintable !== undefined) {
+      this.input.buffer += kittyPrintable;
+      return true;
+    }
     if (data.length === 1 && data.charCodeAt(0) >= 32) {
       this.input.buffer += data;
       return true;
@@ -148,7 +153,7 @@ type SelectableKind = "start" | "tree" | "loop";
 
 export class WorkflowTab extends BaseEditorTab implements EditorTab {
   readonly name = "Workflow";
-  readonly footerHints = "j/k select · e edit · a add · x delete · J/K move · t if-changes · [ ] rounds · s save";
+  readonly footerHints = "j/k sel · e edit · a add · x del · J/K move · t if-chg · [ ] rnds · s save";
   readonly draft: WorkflowDraft;
   private selection = 0;
 
@@ -179,50 +184,50 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
 
   handleInput(data: string): boolean {
     if (this.handleInputMode(data)) return true;
-    if (matchesKey(data, Key.down) || data === "j") {
+    if (matchesKey(data, Key.down) || matchesKey(data, "j")) {
       this.selection = Math.min(this.selection + 1, this.rowCount() - 1);
       return true;
     }
-    if (matchesKey(data, Key.up) || data === "k") {
+    if (matchesKey(data, Key.up) || matchesKey(data, "k")) {
       this.selection = Math.max(this.selection - 1, 0);
       return true;
     }
     const { kind, position } = this.rowInfo(this.selection);
-    if (data === "e") {
+    if (matchesKey(data, "e")) {
       this.editRow(kind, position);
       return true;
     }
-    if (data === "a") {
+    if (matchesKey(data, "a")) {
       this.addRow(kind);
       return true;
     }
-    if (data === "x") {
+    if (matchesKey(data, "x")) {
       this.deleteRow(kind, position);
       return true;
     }
-    if (data === "J") {
+    if (matchesKey(data, "shift+j")) {
       this.moveRow(kind, position, 1);
       return true;
     }
-    if (data === "K") {
+    if (matchesKey(data, "shift+k")) {
       this.moveRow(kind, position, -1);
       return true;
     }
-    if (data === "t") {
+    if (matchesKey(data, "t")) {
       this.toggleIfChanges(kind, position);
       return true;
     }
-    if (data === "[") {
+    if (matchesKey(data, "[")) {
       this.draft.rounds = Math.max(1, this.draft.rounds - 1);
       this.dirty = true;
       return true;
     }
-    if (data === "]") {
+    if (matchesKey(data, "]")) {
       this.draft.rounds = Math.min(MAX_ROUNDS, this.draft.rounds + 1);
       this.dirty = true;
       return true;
     }
-    if (data === "s") {
+    if (matchesKey(data, "s")) {
       this.save();
       return true;
     }
@@ -449,27 +454,27 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
 
   handleInput(data: string): boolean {
     if (this.handleInputMode(data)) return true;
-    if (matchesKey(data, Key.down) || data === "j") {
+    if (matchesKey(data, Key.down) || matchesKey(data, "j")) {
       this.selection = Math.min(this.selection + 1, Math.max(0, this.keys.length - 1));
       return true;
     }
-    if (matchesKey(data, Key.up) || data === "k") {
+    if (matchesKey(data, Key.up) || matchesKey(data, "k")) {
       this.selection = Math.max(this.selection - 1, 0);
       return true;
     }
-    if (data === "e") {
+    if (matchesKey(data, "e")) {
       this.editSelected();
       return true;
     }
-    if (data === "a") {
+    if (matchesKey(data, "a")) {
       this.addEntry();
       return true;
     }
-    if (data === "x") {
+    if (matchesKey(data, "x")) {
       this.deleteSelected();
       return true;
     }
-    if (data === "s") {
+    if (matchesKey(data, "s")) {
       this.save();
       return true;
     }
@@ -577,7 +582,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
 
 export class MessagesTab extends StoreTab {
   constructor(theme: Theme, notify: Notify) {
-    super(theme, notify, "Messages", "j/k select · e edit · a add · x delete · s save");
+    super(theme, notify, "Messages", "j/k sel · e edit · a add · x del · s save");
   }
   protected load(): Record<string, string> {
     return getMessages();
@@ -594,7 +599,7 @@ export class MessagesTab extends StoreTab {
 
 export class CommandsTab extends StoreTab {
   constructor(theme: Theme, notify: Notify) {
-    super(theme, notify, "Commands", "j/k select · e edit · a add · x delete · s save");
+    super(theme, notify, "Commands", "j/k sel · e edit · a add · x del · s save");
   }
   protected load(): Record<string, string> {
     return getCommands();
@@ -611,7 +616,6 @@ export class CommandsTab extends StoreTab {
 
 export interface WorkflowEditorOverlayOptions {
   title: string;
-  subtitle: string;
   tabs: EditorTab[];
   theme: Theme;
   done: () => void;
@@ -644,7 +648,7 @@ export class WorkflowEditorOverlay {
       this.confirmingClose = false;
       return;
     }
-    if (matchesKey(data, Key.escape) || data === "q") {
+    if (matchesKey(data, Key.escape) || matchesKey(data, "q")) {
       if (this.confirmingClose) {
         this.opts.done();
         return;
@@ -673,7 +677,7 @@ export class WorkflowEditorOverlay {
     const borderBottom = th.fg("border", `╰${"─".repeat(innerW)}╯`);
 
     lines.push(borderTop);
-    lines.push(row(` ${th.fg("accent", th.bold(this.opts.title))}  ${th.fg("dim", `(${this.opts.subtitle})`)}`));
+    lines.push(row(` ${th.fg("accent", th.bold(this.opts.title))}`));
 
     let tabBar = " ";
     for (let i = 0; i < this.opts.tabs.length; i++) {
@@ -693,8 +697,8 @@ export class WorkflowEditorOverlay {
     }
 
     lines.push(borderSep);
-    const hintParts = [this.opts.tabs.length > 1 ? "Tab switch" : "", this.active.footerHints, "q close"].filter(Boolean);
-    lines.push(row(th.fg("dim", ` ${hintParts.join(" · ")}`)));
+    const hintParts = [this.opts.tabs.length > 1 ? "Tab" : "", this.active.footerHints, "q close"].filter(Boolean);
+    lines.push(row(th.fg("dim", truncate(` ${hintParts.join(" · ")}`, innerW))));
     lines.push(borderBottom);
     return lines;
   }

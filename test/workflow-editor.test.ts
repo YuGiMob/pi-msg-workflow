@@ -27,7 +27,17 @@ vi.mock("@earendil-works/pi-tui", () => ({
     if (key === "\x1b[A") return data === "\x1b[A";
     if (key === "\x1b[B") return data === "\x1b[B";
     if (key === "shift-tab") return data === "\x1b[Z";
+    if (key === "shift+j") return data === "J" || data === "\x1b[74;2u";
+    if (key === "shift+k") return data === "K" || data === "\x1b[75;2u";
+    if (typeof key === "string" && key.length === 1) {
+      return data === key || data === `\x1b[${key.charCodeAt(0)};1u`;
+    }
     return false;
+  },
+  decodeKittyPrintable: (data: string) => {
+    const match = data.match(/^\x1b\[(\d+);1u$/);
+    if (!match) return undefined;
+    return String.fromCharCode(Number(match[1]));
   },
   visibleWidth: vi.fn((s: string) => s.length),
 }));
@@ -297,6 +307,16 @@ describe("WorkflowTab", () => {
     expect(tab.dirty).toBe(false);
   });
 
+  it("moves selection with j sent as a Kitty CSI-u sequence", () => {
+    tab.handleInput("\x1b[106;1u");
+    expect((tab as any).selection).toBe(1);
+  });
+
+  it("moves a row with J sent as a Kitty CSI-u sequence", () => {
+    tab.handleInput("\x1b[74;2u");
+    expect(tab.draft.start).toEqual(["2", "1", "3", "4", "5"]);
+  });
+
   it("renders rows with previews", () => {
     const lines = tab.render(78, 12);
     expect(lines[0]).toContain("Rounds: 2");
@@ -429,6 +449,17 @@ describe("MessagesTab", () => {
     expect(tab.draft["1"]).toBe("line one line two");
   });
 
+  it("types Kitty CSI-u characters into the input", () => {
+    tab.handleInput("e");
+    tab.handleInput("\x1b[97;1u");
+    tab.handleInput("\x1b[98;1u");
+    tab.handleInput("\x1b[99;1u");
+    tab.handleInput("\x1b[100;1u");
+    tab.handleInput("\x1b[101;1u");
+    tab.handleInput("\r");
+    expect(tab.draft["1"]).toBe("abcde");
+  });
+
   it("wraps long content across lines up to the window width", () => {
     vi.mocked(readFileSync).mockImplementation((path: unknown) => {
       if (String(path).includes("workflow.json")) return JSON.stringify(WORKFLOW_JSON);
@@ -552,7 +583,6 @@ describe("WorkflowEditorOverlay", () => {
     commandsTab = new CommandsTab(theme as any, vi.fn() as any);
     overlay = new WorkflowEditorOverlay({
       title: "Workflow Editor",
-      subtitle: "workflow.json · messages.json · commands.json",
       tabs: [workflowTab, messagesTab, commandsTab],
       theme: theme as any,
       done,
@@ -590,6 +620,11 @@ describe("WorkflowEditorOverlay", () => {
     overlay.handleInput("q");
     expect(done).toHaveBeenCalled();
     expect(onNotify).not.toHaveBeenCalled();
+  });
+
+  it("exits with q sent as a Kitty CSI-u sequence", () => {
+    overlay.handleInput("\x1b[113;1u");
+    expect(done).toHaveBeenCalled();
   });
 
   it("requires a second q to close with unsaved changes", () => {
