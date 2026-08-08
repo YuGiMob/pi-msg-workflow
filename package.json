@@ -1,6 +1,6 @@
 {
   "name": "pi-msg-workflow",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "type": "module",
   "description": "Pi extension: predefined message and command stores plus a configurable improvement workflow",
   "main": "index.ts",

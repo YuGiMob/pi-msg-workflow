@@ -1,12 +1,21 @@
 {
   "rounds": 2,
-  "start": ["1", "2", "3", "4", "5"],
+  "start": [
+    { "msg": "1" },
+    { "msg": "2" },
+    { "msg": "3" },
+    { "msg": "4" },
+    { "msg": "5" }
+  ],
   "loop": [
     { "tree": "1" },
     { "cmd": "1" },
-    { "send": "6" },
-    { "send": "7" },
-    { "send": "5", "onlyIfChanges": true },
+    { "msg": "6" },
+    { "msg": "7" },
+    { "msg": "5", "onlyIfChanges": true },
     { "cmd": "1" }
+  ],
+  "finally": [
+    { "msg": "8" }
   ]
 }

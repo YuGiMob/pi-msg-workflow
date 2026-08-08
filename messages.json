@@ -5,5 +5,6 @@
   "4": "Implement all of the changes worth implementing",
   "5": "I need you to take a look at the git status and git diff to validate that the changes you wanted to make, are the same as the changes you actually did",
   "6": "I need you to take a closer look at all of the changes that I did with another agent in this codebase. You can see the changes via 'git diff --staged'",
-  "7": "If your review found any issues with the staged changes, fix them now"
+  "7": "If your review found any issues with the staged changes, fix them now",
+  "8": "So, since the last commit you and my other agent have done a couple changes. I need you to summarize all of the changes so far"
 }

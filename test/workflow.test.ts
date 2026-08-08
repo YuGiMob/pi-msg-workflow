@@ -19,21 +19,23 @@ const MSG4 = "Implement all of the changes worth implementing";
 const MSG5 = "take a look at the git status and git diff";
 const MSG6 = "take a closer look at all of the changes";
 const MSG7 = "If your review found any issues with the staged changes, fix them now";
+const MSG8 = "So, since the last commit you and my other agent have done a couple changes. I need you to summarize all of the changes so far";
 
-const MESSAGES = { "1": MSG1, "2": MSG2, "3": MSG3, "4": MSG4, "5": MSG5, "6": MSG6, "7": MSG7 };
+const MESSAGES = { "1": MSG1, "2": MSG2, "3": MSG3, "4": MSG4, "5": MSG5, "6": MSG6, "7": MSG7, "8": MSG8 };
 const COMMANDS = { "1": "git add ." };
 
 const DEFAULT_WORKFLOW = {
   rounds: 2,
-  start: ["1", "2", "3", "4", "5"],
+  start: [{ msg: "1" }, { msg: "2" }, { msg: "3" }, { msg: "4" }, { msg: "5" }],
   loop: [
     { tree: "1" },
     { cmd: "1" },
-    { send: "6" },
-    { send: "7" },
-    { send: "5", onlyIfChanges: true },
+    { msg: "6" },
+    { msg: "7" },
+    { msg: "5", onlyIfChanges: true },
     { cmd: "1" },
   ],
+  finally: [{ msg: "8" }],
 };
 
 function userEntry(id: string, text: string) {
@@ -187,7 +189,7 @@ describe("workflow extension", () => {
     const ctx = createCtx([]);
     await commands["workflow"].handler("", ctx);
     const sent = pi.sendUserMessage.mock.calls.map((c: any[]) => c[0]);
-    expect(sent).toEqual([MSG1, MSG2, MSG3, MSG4, MSG5, MSG6, MSG7, MSG6, MSG7]);
+    expect(sent).toEqual([MSG1, MSG2, MSG3, MSG4, MSG5, MSG6, MSG7, MSG6, MSG7, MSG8]);
   });
 
   it("waits for pending turns before each send and before detection", async () => {
@@ -195,8 +197,8 @@ describe("workflow extension", () => {
     await commands["workflow"].handler("", ctx);
     const sends = pi.sendUserMessage.mock.invocationCallOrder;
     const waits = ctx.waitForIdle.mock.invocationCallOrder;
-    expect(sends).toHaveLength(9);
-    expect(waits).toHaveLength(10);
+    expect(sends).toHaveLength(10);
+    expect(waits).toHaveLength(11);
     for (let i = 0; i < sends.length; i++) {
       expect(waits[i]).toBeLessThan(sends[i]!);
       expect(sends[i]).toBeLessThan(waits[i + 1]!);
@@ -207,7 +209,7 @@ describe("workflow extension", () => {
     const ctx = createCtx(fullPhaseA());
     await commands["workflow"].handler("", ctx);
     const sent = pi.sendUserMessage.mock.calls.map((c: any[]) => c[0]);
-    expect(sent).toEqual([MSG6, MSG7, MSG6, MSG7]);
+    expect(sent).toEqual([MSG6, MSG7, MSG6, MSG7, MSG8]);
   });
 
   it("continues the start phase from where it left off", async () => {
@@ -215,7 +217,76 @@ describe("workflow extension", () => {
     const ctx = createCtx(entries);
     await commands["workflow"].handler("", ctx);
     const sent = pi.sendUserMessage.mock.calls.map((c: any[]) => c[0]);
-    expect(sent).toEqual([MSG3, MSG4, MSG5, MSG6, MSG7, MSG6, MSG7]);
+    expect(sent).toEqual([MSG3, MSG4, MSG5, MSG6, MSG7, MSG6, MSG7, MSG8]);
+  });
+
+  it("runs cmd steps in the start phase", async () => {
+    holder.workflow = { rounds: 1, start: [{ msg: "1" }, { cmd: "1" }, { msg: "2" }], loop: [{ tree: "1" }], finally: [] };
+    const ctx = createCtx([]);
+    await commands["workflow"].handler("", ctx);
+    const sent = pi.sendUserMessage.mock.calls.map((c: any[]) => c[0]);
+    expect(sent).toEqual([MSG1, MSG2]);
+    expect(pi.exec).toHaveBeenCalledWith("git", ["add", "."]);
+  });
+
+  it("resumes the start phase past cmd steps", async () => {
+    holder.workflow = { rounds: 1, start: [{ msg: "1" }, { cmd: "1" }, { msg: "2" }, { msg: "3" }], loop: [{ tree: "1" }], finally: [] };
+    const entries = [userEntry("u1", MSG1), assistantEntry("a1"), userEntry("u2", MSG2), assistantEntry("a2")];
+    const ctx = createCtx(entries);
+    await commands["workflow"].handler("", ctx);
+    const sent = pi.sendUserMessage.mock.calls.map((c: any[]) => c[0]);
+    expect(sent).toEqual([MSG3]);
+    expect(pi.exec).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts when a start command fails", async () => {
+    holder.workflow = { rounds: 1, start: [{ msg: "1" }, { cmd: "1" }], loop: [{ tree: "1" }] };
+    pi.exec = vi.fn(async () => ({ code: 1, stdout: "", stderr: "boom" }));
+    const ctx = createCtx([]);
+    await commands["workflow"].handler("", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Command 1 failed: boom", "error");
+    expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("aborts when a start command is missing", async () => {
+    holder.workflow = { rounds: 1, start: [{ cmd: "99" }], loop: [{ tree: "1" }] };
+    const ctx = createCtx([]);
+    await commands["workflow"].handler("", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Missing commands"), "error");
+    expect(pi.sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it("dry run shows cmd steps in the start phase", async () => {
+    holder.workflow = { rounds: 1, start: [{ msg: "1" }, { cmd: "1" }], loop: [{ tree: "1" }] };
+    const ctx = createCtx([]);
+    await commands["workflow"].handler("dry", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("start: msg 1, cmd 1"), "info");
+  });
+
+  it("runs cmd steps in the finally section", async () => {
+    holder.workflow = { rounds: 1, start: [], loop: [{ tree: "1" }], finally: [{ cmd: "1" }, { msg: "8" }] };
+    const ctx = createCtx(fullPhaseA());
+    await commands["workflow"].handler("", ctx);
+    const sent = pi.sendUserMessage.mock.calls.map((c: any[]) => c[0]);
+    expect(sent).toEqual([MSG8]);
+    expect(pi.exec).toHaveBeenCalledWith("git", ["add", "."]);
+  });
+
+  it("aborts when a finally command fails", async () => {
+    holder.workflow = { rounds: 1, start: [], loop: [{ tree: "1" }], finally: [{ cmd: "1" }] };
+    pi.exec = vi.fn(async () => ({ code: 1, stdout: "", stderr: "boom" }));
+    const ctx = createCtx(fullPhaseA());
+    await commands["workflow"].handler("", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Command 1 failed: boom", "error");
+    expect(pi.sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it("aborts when a finally message is missing", async () => {
+    holder.workflow = { rounds: 1, start: [], loop: [{ tree: "1" }], finally: [{ msg: "99" }] };
+    const ctx = createCtx(fullPhaseA());
+    await commands["workflow"].handler("", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Missing messages"), "error");
+    expect(pi.sendUserMessage).not.toHaveBeenCalled();
   });
 
   it("resets context, stages changes, and checks for changes each review round", async () => {
@@ -234,7 +305,7 @@ describe("workflow extension", () => {
     expect(pi.exec).toHaveBeenCalledTimes(9);
     expect(ctx.navigateTree).toHaveBeenCalledTimes(3);
     const sent = pi.sendUserMessage.mock.calls.map((c: any[]) => c[0]);
-    expect(sent).toEqual([MSG6, MSG7, MSG6, MSG7, MSG6, MSG7]);
+    expect(sent).toEqual([MSG6, MSG7, MSG6, MSG7, MSG6, MSG7, MSG8]);
   });
 
   it("uses the configured default round count for invalid arguments", async () => {
@@ -259,9 +330,10 @@ describe("workflow extension", () => {
     const ctx = createCtx([]);
     await commands["workflow"].handler("dry", ctx);
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Dry run: 2 rounds"), "info");
-    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("start: 1, 2, 3, 4, 5"), "info");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("start: msg 1, msg 2, msg 3, msg 4, msg 5"), "info");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("msg 5 (if-changes)"), "info");
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("tree 1"), "info");
-    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("send 5 (if-changes)"), "info");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("finally: msg 8"), "info");
     expect(pi.sendUserMessage).not.toHaveBeenCalled();
     expect(ctx.navigateTree).not.toHaveBeenCalled();
     expect(pi.exec).not.toHaveBeenCalled();
@@ -352,14 +424,14 @@ describe("workflow extension", () => {
     const ctx = createCtx(fullPhaseA());
     await commands["workflow"].handler("", ctx);
     const sent = pi.sendUserMessage.mock.calls.map((c: any[]) => c[0]);
-    expect(sent).toEqual([MSG6, MSG7, MSG5, MSG6, MSG7, MSG5]);
+    expect(sent).toEqual([MSG6, MSG7, MSG5, MSG6, MSG7, MSG5, MSG8]);
   });
 
   it("skips the validation message when no changes are detected", async () => {
     const ctx = createCtx(fullPhaseA());
     await commands["workflow"].handler("", ctx);
     const sent = pi.sendUserMessage.mock.calls.map((c: any[]) => c[0]);
-    expect(sent).toEqual([MSG6, MSG7, MSG6, MSG7]);
+    expect(sent).toEqual([MSG6, MSG7, MSG6, MSG7, MSG8]);
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("no changes detected"), "info");
   });
 
@@ -377,7 +449,7 @@ describe("workflow extension", () => {
     const ctx = createCtx(fullPhaseA());
     await commands["workflow"].handler("", ctx);
     const sent = pi.sendUserMessage.mock.calls.map((c: any[]) => c[0]);
-    expect(sent).toEqual([MSG6, MSG7, MSG6, MSG7, MSG5]);
+    expect(sent).toEqual([MSG6, MSG7, MSG6, MSG7, MSG5, MSG8]);
     expect(statusCalls).toBe(2);
   });
 
@@ -428,7 +500,7 @@ describe("workflow extension", () => {
   });
 
   it("anchors to the response of the last start message when it is the tree anchor", async () => {
-    holder.workflow = { rounds: 1, start: ["1"], loop: [{ tree: "1" }] };
+    holder.workflow = { rounds: 1, start: [{ msg: "1" }], loop: [{ tree: "1" }] };
     const ctx = createCtx([]);
     await commands["workflow"].handler("", ctx);
     expect(ctx.navigateTree).toHaveBeenCalledWith("a0", { summarize: false });
@@ -468,8 +540,9 @@ describe("workflow extension", () => {
   it("uses rounds and loop from the configured workflow.json", async () => {
     holder.workflow = {
       rounds: 1,
-      start: ["1"],
-      loop: [{ tree: "1" }, { send: "6" }],
+      start: [{ msg: "1" }],
+      loop: [{ tree: "1" }, { msg: "6" }],
+      finally: [],
     };
     const ctx = createCtx(fullPhaseA());
     await commands["workflow"].handler("", ctx);
@@ -483,7 +556,7 @@ describe("workflow extension", () => {
     holder.workflow = {
       rounds: 1,
       start: [],
-      loop: [{ send: "6" }],
+      loop: [{ msg: "6" }],
     };
     const ctx = createCtx(fullPhaseA());
     await commands["workflow"].handler("", ctx);
@@ -500,7 +573,7 @@ describe("workflow extension", () => {
     await commands["workflow"].handler("", ctx);
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("workflow.json"), "warning");
     const sent = pi.sendUserMessage.mock.calls.map((c: any[]) => c[0]);
-    expect(sent).toEqual([MSG1, MSG2, MSG3, MSG4, MSG5, MSG6, MSG7, MSG6, MSG7]);
+    expect(sent).toEqual([MSG1, MSG2, MSG3, MSG4, MSG5, MSG6, MSG7, MSG6, MSG7, MSG8]);
   });
 
   it("workflow-stop requires interactive mode", async () => {
@@ -545,7 +618,7 @@ describe("workflow extension", () => {
     const ctx = createCtx(fullPhaseA());
     await commands["workflow"].handler("", ctx);
     const sent = pi.sendUserMessage.mock.calls.map((c: any[]) => c[0]);
-    expect(sent).toEqual([MSG6, MSG7, MSG6, MSG7]);
+    expect(sent).toEqual([MSG6, MSG7, MSG6, MSG7, MSG8]);
   });
 });
 
@@ -684,7 +757,8 @@ describe("getWorkflowConfig", () => {
     vi.mocked(existsSync).mockReturnValue(false);
     const { config, errors } = getWorkflowConfig();
     expect(config.rounds).toBe(2);
-    expect(config.start).toEqual(["1", "2", "3", "4", "5"]);
+    expect(config.start).toEqual([{ msg: "1" }, { msg: "2" }, { msg: "3" }, { msg: "4" }, { msg: "5" }]);
+    expect(config.finally).toEqual([{ msg: "8" }]);
     expect(config.loop[0]).toEqual({ tree: "1" });
     expect(config.loop[1]).toEqual({ cmd: "1" });
     expect(errors).toEqual([]);
@@ -710,11 +784,11 @@ describe("getWorkflowConfig", () => {
     vi.mocked(existsSync).mockReturnValue(true);
     vi.mocked(readFileSync).mockReturnValue(
       JSON.stringify({
-        loop: [{ tree: "1" }, { send: "8" }, { bogus: "1" }, { cmd: "" }],
+        loop: [{ tree: "1" }, { msg: "8" }, { bogus: "1" }, { cmd: "" }],
       }) as never,
     );
     const { config, errors } = getWorkflowConfig();
-    expect(config.loop).toEqual([{ tree: "1" }, { send: "8" }]);
+    expect(config.loop).toEqual([{ tree: "1" }, { msg: "8" }]);
     expect(errors).toHaveLength(2);
   });
 
@@ -723,18 +797,20 @@ describe("getWorkflowConfig", () => {
     vi.mocked(readFileSync).mockReturnValue(
       JSON.stringify({
         rounds: 3,
-        start: ["1"],
-        loop: [{ tree: "1" }, { cmd: "1" }, { send: "5", onlyIfChanges: true }],
+        start: [{ msg: "1" }],
+        loop: [{ tree: "1" }, { cmd: "1" }, { msg: "5", onlyIfChanges: true }],
+        finally: [{ msg: "8" }, { cmd: "1" }],
       }) as never,
     );
     const { config, errors } = getWorkflowConfig();
     expect(config.rounds).toBe(3);
-    expect(config.start).toEqual(["1"]);
+    expect(config.start).toEqual([{ msg: "1" }]);
     expect(config.loop).toEqual([
       { tree: "1" },
       { cmd: "1" },
-      { send: "5", onlyIfChanges: true },
+      { msg: "5", onlyIfChanges: true },
     ]);
+    expect(config.finally).toEqual([{ msg: "8" }, { cmd: "1" }]);
     expect(errors).toEqual([]);
   });
 
@@ -744,11 +820,11 @@ describe("getWorkflowConfig", () => {
       JSON.stringify({
         rounds: 1,
         start: [],
-        loop: [{ send: "6" }],
+        loop: [{ msg: "6" }],
       }) as never,
     );
     const { config, errors } = getWorkflowConfig();
-    expect(config.loop).toEqual([{ send: "6" }]);
+    expect(config.loop).toEqual([{ msg: "6" }]);
     expect(errors.some((e) => e.includes("tree step"))).toBe(true);
   });
 
@@ -760,12 +836,12 @@ describe("getWorkflowConfig", () => {
           { tree: "1" },
           { tree: "2", onlyIfChanges: true },
           { cmd: "1", onlyIfChanges: true },
-          { send: "6", onlyIfChanges: true },
+          { msg: "6", onlyIfChanges: true },
         ],
       }) as never,
     );
     const { config, errors } = getWorkflowConfig();
-    expect(config.loop).toEqual([{ tree: "1" }, { send: "6", onlyIfChanges: true }]);
+    expect(config.loop).toEqual([{ tree: "1" }, { msg: "6", onlyIfChanges: true }]);
     expect(errors).toHaveLength(2);
   });
 
@@ -773,7 +849,7 @@ describe("getWorkflowConfig", () => {
     vi.mocked(existsSync).mockReturnValue(true);
     vi.mocked(readFileSync).mockReturnValue(
       JSON.stringify({
-        loop: [{ tree: "1" }, { send: "abc" }, { cmd: "x" }],
+        loop: [{ tree: "1" }, { msg: "abc" }, { cmd: "x" }],
       }) as never,
     );
     const { config, errors } = getWorkflowConfig();

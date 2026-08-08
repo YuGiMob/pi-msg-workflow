@@ -3,7 +3,7 @@ import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { getMessages, setMessages } from "./src/messages.js";
 import { getCommands, setCommands } from "./src/commands.js";
 import { MAX_ROUNDS } from "./src/constants.js";
-import { getWorkflowConfig, referencedIndices, referencedCommands } from "./src/workflow-config.js";
+import { getWorkflowConfig, referencedIndices, referencedCommands, type StartStep } from "./src/workflow-config.js";
 import { WorkflowEditorOverlay, WorkflowTab, MessagesTab, CommandsTab, type EditorTab } from "./src/workflow-editor.js";
 
 const OVERLAY_OPTIONS = {
@@ -246,6 +246,77 @@ async function runCommand(
   }
 }
 
+async function runStoredCommand(
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+  num: string,
+  prefix: string,
+): Promise<boolean> {
+  const command = getCommands()[num];
+  if (!command) {
+    ctx.ui.notify(`Command ${num} does not exist.`, "error");
+    return false;
+  }
+  const result = await runCommand(pi, command, `${prefix}${command}...`, ctx.ui);
+  if (!result.ok) {
+    if (result.reason === "empty") {
+      ctx.ui.notify(`Command ${num} is empty.`, "error");
+    } else if (result.reason === "unterminated") {
+      ctx.ui.notify(`Command ${num} has an unterminated quote.`, "error");
+    } else {
+      ctx.ui.notify(`Command ${num} failed: ${result.stderr}`, "error");
+    }
+    return false;
+  }
+  return true;
+}
+
+async function sendStoredMessage(
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+  num: string,
+  text: string,
+  workingText: string,
+): Promise<boolean> {
+  ctx.ui.setWorkingMessage(workingText);
+  const result = await sendAndWaitForTurn(pi, ctx, text);
+  if (result === "cancelled") {
+    ctx.ui.notify("Workflow stopped", "info");
+    return false;
+  }
+  if (result === "failed") {
+    ctx.ui.notify(`Failed to send message ${num}`, "error");
+    return false;
+  }
+  return true;
+}
+
+async function runOncePhase(
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+  steps: StartStep[],
+  messages: Record<string, string>,
+  skipMsgs: number,
+): Promise<boolean> {
+  let skipped = 0;
+  for (const step of steps) {
+    if (workflowStopRequested) {
+      ctx.ui.notify("Workflow stopped", "info");
+      return false;
+    }
+    if (step.msg !== undefined) {
+      if (skipped < skipMsgs) {
+        skipped++;
+        continue;
+      }
+      if (!(await sendStoredMessage(pi, ctx, step.msg, messages[step.msg]!, `Sending message ${step.msg}...`))) return false;
+    } else if (step.cmd !== undefined) {
+      if (!(await runStoredCommand(pi, ctx, step.cmd, "Running "))) return false;
+    }
+  }
+  return true;
+}
+
 interface TextBlock {
   type?: string;
   text?: string;
@@ -475,39 +546,29 @@ export default function (pi: ExtensionAPI) {
       const dryRun = tokens.some((token) => token === "dry" || token === "--dry-run");
       const rounds = parseRounds(tokens.find((token) => /^\d+$/.test(token)) ?? "", config.rounds);
       if (dryRun) {
-        const startText = config.start.length > 0 ? config.start.join(", ") : "(none)";
+        const startText = config.start.length > 0
+          ? config.start.map((step) => (step.msg !== undefined ? `msg ${step.msg}` : `cmd ${step.cmd}`)).join(", ")
+          : "(none)";
         const loopText = config.loop
           .map((step) => {
             if (step.tree !== undefined) return `tree ${step.tree}`;
             if (step.cmd !== undefined) return `cmd ${step.cmd}`;
-            return `send ${step.send}${step.onlyIfChanges ? " (if-changes)" : ""}`;
+            return `msg ${step.msg}${step.onlyIfChanges ? " (if-changes)" : ""}`;
           })
           .join(", ");
-        ctx.ui.notify(`[pi-msg-workflow] Dry run: ${rounds} round${rounds === 1 ? "" : "s"}\nstart: ${startText}\nloop: ${loopText}`, "info");
+        const finallyText = config.finally.length > 0
+          ? config.finally.map((step) => (step.msg !== undefined ? `msg ${step.msg}` : `cmd ${step.cmd}`)).join(", ")
+          : "(none)";
+        ctx.ui.notify(`[pi-msg-workflow] Dry run: ${rounds} round${rounds === 1 ? "" : "s"}\nstart: ${startText}\nloop: ${loopText}\nfinally: ${finallyText}`, "info");
         return;
       }
       workflowStopRequested = false;
       try {
         ctx.ui.setWorkingMessage("Waiting for queued messages to complete...");
         await ctx.waitForIdle();
-        const startTexts = config.start.map((num) => messages[num]!);
-        const matched = countLeadingPhaseMatches(ctx.sessionManager.getBranch(), startTexts);
-        for (const num of config.start.slice(matched)) {
-          if (workflowStopRequested) {
-            ctx.ui.notify("Workflow stopped", "info");
-            return;
-          }
-          ctx.ui.setWorkingMessage(`Sending message ${num}...`);
-          const result = await sendAndWaitForTurn(pi, ctx, messages[num]!);
-          if (result === "cancelled") {
-            ctx.ui.notify("Workflow stopped", "info");
-            return;
-          }
-          if (result === "failed") {
-            ctx.ui.notify(`Failed to send message ${num}`, "error");
-            return;
-          }
-        }
+        const startMsgs = config.start.flatMap((step) => (step.msg !== undefined ? [messages[step.msg]!] : []));
+        const matched = countLeadingPhaseMatches(ctx.sessionManager.getBranch(), startMsgs);
+        if (!(await runOncePhase(pi, ctx, config.start, messages, matched))) return;
         for (let round = 1; round <= rounds; round++) {
           for (const step of config.loop) {
             if (workflowStopRequested) {
@@ -519,23 +580,8 @@ export default function (pi: ExtensionAPI) {
               const status = await navigateToMessageAnchor(ctx, step.tree);
               if (!notifyNavigationStatus(ctx, step.tree, status, "Workflow cancelled", "error")) return;
             } else if (step.cmd !== undefined) {
-              const command = getCommands()[step.cmd];
-              if (!command) {
-                ctx.ui.notify(`Command ${step.cmd} does not exist.`, "error");
-                return;
-              }
-              const result = await runCommand(pi, command, `Round ${round}/${rounds}: running ${command}...`, ctx.ui);
-              if (!result.ok) {
-                if (result.reason === "empty") {
-                  ctx.ui.notify(`Command ${step.cmd} is empty.`, "error");
-                } else if (result.reason === "unterminated") {
-                  ctx.ui.notify(`Command ${step.cmd} has an unterminated quote.`, "error");
-                } else {
-                  ctx.ui.notify(`Command ${step.cmd} failed: ${result.stderr}`, "error");
-                }
-                return;
-              }
-            } else if (step.send !== undefined) {
+              if (!(await runStoredCommand(pi, ctx, step.cmd, `Round ${round}/${rounds}: running `))) return;
+            } else if (step.msg !== undefined) {
               if (step.onlyIfChanges) {
                 ctx.ui.setWorkingMessage(`Round ${round}/${rounds}: checking for changes...`);
                 const statusResult = await pi.exec("git", ["status", "--porcelain"]);
@@ -544,23 +590,15 @@ export default function (pi: ExtensionAPI) {
                   return;
                 }
                 if (!statusResult.stdout.trim()) {
-                  ctx.ui.notify(`Round ${round}/${rounds}: no changes detected, skipping message ${step.send}`, "info");
+                  ctx.ui.notify(`Round ${round}/${rounds}: no changes detected, skipping message ${step.msg}`, "info");
                   continue;
                 }
               }
-              ctx.ui.setWorkingMessage(`Round ${round}/${rounds}: sending message ${step.send}...`);
-              const result = await sendAndWaitForTurn(pi, ctx, messages[step.send]!);
-              if (result === "cancelled") {
-                ctx.ui.notify("Workflow stopped", "info");
-                return;
-              }
-              if (result === "failed") {
-                ctx.ui.notify(`Failed to send message ${step.send}`, "error");
-                return;
-              }
+              if (!(await sendStoredMessage(pi, ctx, step.msg, messages[step.msg]!, `Round ${round}/${rounds}: sending message ${step.msg}...`))) return;
             }
           }
         }
+        if (!(await runOncePhase(pi, ctx, config.finally, messages, 0))) return;
         ctx.ui.notify(`Workflow complete: ${rounds} round${rounds === 1 ? "" : "s"}`, "info");
       } finally {
         ctx.ui.setWorkingMessage();

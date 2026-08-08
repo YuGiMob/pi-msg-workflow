@@ -144,12 +144,13 @@ abstract class BaseEditorTab implements EditorTab {
 
 interface WorkflowDraft {
   rounds: number;
-  start: string[];
+  start: LoopStep[];
   tree: string;
   loop: LoopStep[];
+  finally: LoopStep[];
 }
 
-type SelectableKind = "start" | "tree" | "loop";
+type SelectableKind = "start" | "tree" | "loop" | "finally";
 
 export class WorkflowTab extends BaseEditorTab implements EditorTab {
   readonly name = "Workflow";
@@ -162,24 +163,31 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     const { config } = getWorkflowConfig();
     this.draft = {
       rounds: config.rounds,
-      start: [...config.start],
+      start: config.start.map((step) => ({ ...step })),
       tree: config.loop[0]?.tree ?? "1",
       loop: config.loop.slice(1).map((step) => ({ ...step })),
+      finally: config.finally.map((step) => ({ ...step })),
     };
   }
 
   private rowCount(): number {
-    return this.draft.start.length + 1 + this.draft.loop.length;
+    return this.draft.start.length + 1 + this.draft.loop.length + this.draft.finally.length;
   }
 
   private rowInfo(index: number): { kind: SelectableKind; position: number } {
     if (index < this.draft.start.length) return { kind: "start", position: index };
     if (index === this.draft.start.length) return { kind: "tree", position: 0 };
-    return { kind: "loop", position: index - this.draft.start.length - 1 };
+    const loopStart = this.draft.start.length + 1;
+    if (index < loopStart + this.draft.loop.length) return { kind: "loop", position: index - loopStart };
+    return { kind: "finally", position: index - loopStart - this.draft.loop.length };
   }
 
   private selectLoopRow(position: number): void {
     this.selection = this.draft.start.length + 1 + position;
+  }
+
+  private selectFinallyRow(position: number): void {
+    this.selection = this.draft.start.length + 1 + this.draft.loop.length + position;
   }
 
   handleInput(data: string): boolean {
@@ -234,16 +242,26 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     return false;
   }
 
+  private editStepIndex(target: LoopStep[], position: number, action: "msg" | "cmd", current: string): void {
+    const label = action === "msg" ? "message" : "command";
+    this.startInput(`${label} index for ${action} step (current: ${current}): `, (value) => {
+      const index = value.trim();
+      if (!/^\d+$/.test(index)) return "Index must be a number.";
+      const step = target[position]!;
+      target[position] = action === "msg" ? { ...step, msg: index } : { ...step, cmd: index };
+      this.dirty = true;
+      return null;
+    });
+  }
+
   private editRow(kind: SelectableKind, position: number): void {
     if (kind === "start") {
-      const current = this.draft.start[position]!;
-      this.startInput(`message index for start step (current: ${current}): `, (value) => {
-        const index = value.trim();
-        if (!/^\d+$/.test(index)) return "Index must be a number.";
-        this.draft.start[position] = index;
-        this.dirty = true;
-        return null;
-      });
+      const step = this.draft.start[position]!;
+      if (step.msg !== undefined) {
+        this.editStepIndex(this.draft.start, position, "msg", step.msg);
+      } else if (step.cmd !== undefined) {
+        this.editStepIndex(this.draft.start, position, "cmd", step.cmd);
+      }
       return;
     }
     if (kind === "tree") {
@@ -257,27 +275,45 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       });
       return;
     }
-    const step = this.draft.loop[position]!;
-    if (step.send !== undefined) {
-      this.startInput(`message index for send step (current: ${step.send}): `, (value) => {
-        const index = value.trim();
-        if (!/^\d+$/.test(index)) return "Index must be a number.";
-        this.draft.loop[position] = { ...step, send: index };
-        this.dirty = true;
-        return null;
-      });
+    if (kind === "loop") {
+      const step = this.draft.loop[position]!;
+      if (step.msg !== undefined) {
+        this.editStepIndex(this.draft.loop, position, "msg", step.msg);
+        return;
+      }
+      if (step.cmd !== undefined) {
+        this.editStepIndex(this.draft.loop, position, "cmd", step.cmd);
+        return;
+      }
       return;
     }
-    if (step.cmd !== undefined) {
-      this.startInput(`command index for cmd step (current: ${step.cmd}): `, (value) => {
-        const index = value.trim();
-        if (!/^\d+$/.test(index)) return "Index must be a number.";
-        this.draft.loop[position] = { ...step, cmd: index };
+    const step = this.draft.finally[position]!;
+    if (step.msg !== undefined) {
+      this.editStepIndex(this.draft.finally, position, "msg", step.msg);
+    } else if (step.cmd !== undefined) {
+      this.editStepIndex(this.draft.finally, position, "cmd", step.cmd);
+    }
+  }
+
+  private addStepPrompt(prompt: string, target: LoopStep[], select: () => void): void {
+    this.startInput(prompt, (value) => {
+      const text = value.trim();
+      const msgMatch = text.match(/^msg\s+(\d+)$/);
+      if (msgMatch) {
+        target.push({ msg: msgMatch[1]! });
+        select();
         this.dirty = true;
         return null;
-      });
-      return;
-    }
+      }
+      const cmdMatch = text.match(/^cmd\s+(\d+)$/);
+      if (cmdMatch) {
+        target.push({ cmd: cmdMatch[1]! });
+        select();
+        this.dirty = true;
+        return null;
+      }
+      return "Expected: msg <number> or cmd <number>.";
+    });
   }
 
   private addRow(kind: SelectableKind): void {
@@ -286,33 +322,19 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       return;
     }
     if (kind === "start") {
-      this.startInput("message index to add to start: ", (value) => {
-        const index = value.trim();
-        if (!/^\d+$/.test(index)) return "Index must be a number.";
-        this.draft.start.push(index);
+      this.addStepPrompt("add start step (msg <n> | cmd <n>): ", this.draft.start, () => {
         this.selection = this.draft.start.length - 1;
-        this.dirty = true;
-        return null;
       });
       return;
     }
-    this.startInput("add loop step (send <n> | cmd <n>): ", (value) => {
-      const text = value.trim();
-      const sendMatch = text.match(/^send\s+(\d+)$/);
-      if (sendMatch) {
-        this.draft.loop.push({ send: sendMatch[1]! });
+    if (kind === "loop") {
+      this.addStepPrompt("add loop step (msg <n> | cmd <n>): ", this.draft.loop, () => {
         this.selectLoopRow(this.draft.loop.length - 1);
-        this.dirty = true;
-        return null;
-      }
-      const cmdMatch = text.match(/^cmd\s+(\d+)$/);
-      if (cmdMatch) {
-        this.draft.loop.push({ cmd: cmdMatch[1]! });
-        this.selectLoopRow(this.draft.loop.length - 1);
-        this.dirty = true;
-        return null;
-      }
-      return "Expected: send <number> or cmd <number>.";
+      });
+      return;
+    }
+    this.addStepPrompt("add finally step (msg <n> | cmd <n>): ", this.draft.finally, () => {
+      this.selectFinallyRow(this.draft.finally.length - 1);
     });
   }
 
@@ -323,12 +345,21 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     }
     if (kind === "start") {
       this.draft.start.splice(position, 1);
-    } else {
+    } else if (kind === "loop") {
       this.draft.loop.splice(position, 1);
+    } else {
+      this.draft.finally.splice(position, 1);
     }
     this.selection = Math.min(this.selection, this.rowCount() - 1);
     this.dirty = true;
     this.setFlash("Deleted (press s to save)");
+  }
+
+  private swapRows(target: LoopStep[], position: number, delta: number): boolean {
+    const targetIndex = position + delta;
+    if (targetIndex < 0 || targetIndex >= target.length) return false;
+    [target[position], target[targetIndex]] = [target[targetIndex]!, target[position]!];
+    return true;
   }
 
   private moveRow(kind: SelectableKind, position: number, delta: number): void {
@@ -336,39 +367,33 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       this.setFlash("The tree step is fixed as the first loop step");
       return;
     }
-    if (kind === "start") {
-      const target = position + delta;
-      if (target < 0 || target >= this.draft.start.length) return;
-      [this.draft.start[position], this.draft.start[target]] = [this.draft.start[target]!, this.draft.start[position]!];
-    } else {
-      const target = position + delta;
-      if (target < 0 || target >= this.draft.loop.length) return;
-      [this.draft.loop[position], this.draft.loop[target]] = [this.draft.loop[target]!, this.draft.loop[position]!];
-    }
+    const target = kind === "start" ? this.draft.start : kind === "loop" ? this.draft.loop : this.draft.finally;
+    if (!this.swapRows(target, position, delta)) return;
     this.selection += delta;
     this.dirty = true;
   }
 
   private toggleIfChanges(kind: SelectableKind, position: number): void {
     if (kind !== "loop") {
-      this.setFlash("if-changes applies to send steps");
+      this.setFlash("if-changes applies to loop msg steps");
       return;
     }
     const step = this.draft.loop[position]!;
-    if (step.send === undefined) {
-      this.setFlash("if-changes applies to send steps");
+    if (step.msg === undefined) {
+      this.setFlash("if-changes applies to loop msg steps");
       return;
     }
-    this.draft.loop[position] = step.onlyIfChanges ? { send: step.send } : { ...step, onlyIfChanges: true };
+    this.draft.loop[position] = step.onlyIfChanges ? { msg: step.msg } : { ...step, onlyIfChanges: true };
     this.dirty = true;
   }
 
   save(): void {
     const messages = getMessages();
     const indices = [
-      ...this.draft.start,
+      ...this.draft.start.flatMap((step) => (step.msg !== undefined ? [step.msg] : [])),
       this.draft.tree,
-      ...this.draft.loop.flatMap((step) => (step.send !== undefined ? [step.send] : [])),
+      ...this.draft.loop.flatMap((step) => (step.msg !== undefined ? [step.msg] : [])),
+      ...this.draft.finally.flatMap((step) => (step.msg !== undefined ? [step.msg] : [])),
     ];
     const missing = [...new Set(indices)].filter((num) => !messages[num]);
     if (missing.length > 0) {
@@ -376,7 +401,11 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       return;
     }
     const commands = getCommands();
-    const cmdIndices = this.draft.loop.flatMap((step) => (step.cmd !== undefined ? [step.cmd] : []));
+    const cmdIndices = [
+      ...this.draft.start.flatMap((step) => (step.cmd !== undefined ? [step.cmd] : [])),
+      ...this.draft.loop.flatMap((step) => (step.cmd !== undefined ? [step.cmd] : [])),
+      ...this.draft.finally.flatMap((step) => (step.cmd !== undefined ? [step.cmd] : [])),
+    ];
     const missingCommands = [...new Set(cmdIndices)].filter((num) => !commands[num]);
     if (missingCommands.length > 0) {
       this.setFlash(`Missing commands: ${missingCommands.join(", ")} - add and save them in the Commands tab first`);
@@ -386,6 +415,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       rounds: this.draft.rounds,
       start: [...this.draft.start],
       loop: [{ tree: this.draft.tree }, ...this.draft.loop.map((step) => ({ ...step }))],
+      finally: this.draft.finally.map((step) => ({ ...step })),
     };
     try {
       setWorkflowConfig(config);
@@ -409,16 +439,32 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     };
     lines.push(th.fg("dim", ` Rounds: ${this.draft.rounds}   ([ ] to change)`));
     lines.push(th.fg("dim", " start"));
-    this.draft.start.forEach((num, i) => {
-      const preview = messages[num] ? messages[num]! : "(missing)";
-      row(`msg ${num}: ${preview}`, this.selection === i);
+    this.draft.start.forEach((step, i) => {
+      if (step.msg !== undefined) {
+        const preview = messages[step.msg] ? messages[step.msg]! : "(missing)";
+        row(`msg ${step.msg}: ${preview}`, this.selection === i);
+      } else if (step.cmd !== undefined) {
+        const preview = commands[step.cmd] ? commands[step.cmd]! : "(missing)";
+        row(`cmd ${step.cmd}: ${preview}`, this.selection === i);
+      }
     });
     lines.push(th.fg("dim", " loop"));
     row(`tree → ${this.draft.tree}  (fixed first)`, this.selection === this.draft.start.length);
     this.draft.loop.forEach((step, i) => {
       const selected = this.selection === this.draft.start.length + 1 + i;
-      if (step.send !== undefined) {
-        row(`send ${step.send}${step.onlyIfChanges ? " [if-changes]" : ""}`, selected);
+      if (step.msg !== undefined) {
+        row(`msg ${step.msg}${step.onlyIfChanges ? " [if-changes]" : ""}`, selected);
+      } else if (step.cmd !== undefined) {
+        const preview = commands[step.cmd] ? commands[step.cmd]! : "(missing)";
+        row(`cmd ${step.cmd}: ${preview}`, selected);
+      }
+    });
+    lines.push(th.fg("dim", " finally"));
+    this.draft.finally.forEach((step, i) => {
+      const selected = this.selection === this.draft.start.length + 1 + this.draft.loop.length + i;
+      if (step.msg !== undefined) {
+        const preview = messages[step.msg] ? messages[step.msg]! : "(missing)";
+        row(`msg ${step.msg}: ${preview}`, selected);
       } else if (step.cmd !== undefined) {
         const preview = commands[step.cmd] ? commands[step.cmd]! : "(missing)";
         row(`cmd ${step.cmd}: ${preview}`, selected);

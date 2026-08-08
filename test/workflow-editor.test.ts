@@ -52,21 +52,23 @@ const MSG4 = "Implement all of the changes worth implementing";
 const MSG5 = "take a look at the git status and git diff";
 const MSG6 = "take a closer look at all of the changes";
 const MSG7 = "If your review found any issues with the staged changes, fix them now";
+const MSG8 = "So, since the last commit you and my other agent have done a couple changes. I need you to summarize all of the changes so far";
 
-const MESSAGES = { "1": MSG1, "2": MSG2, "3": MSG3, "4": MSG4, "5": MSG5, "6": MSG6, "7": MSG7 };
+const MESSAGES = { "1": MSG1, "2": MSG2, "3": MSG3, "4": MSG4, "5": MSG5, "6": MSG6, "7": MSG7, "8": MSG8 };
 const COMMANDS = { "1": "git add ." };
 
 const WORKFLOW_JSON = {
   rounds: 2,
-  start: ["1", "2", "3", "4", "5"],
+  start: [{ msg: "1" }, { msg: "2" }, { msg: "3" }, { msg: "4" }, { msg: "5" }],
   loop: [
     { tree: "1" },
     { cmd: "1" },
-    { send: "6" },
-    { send: "7" },
-    { send: "5", onlyIfChanges: true },
+    { msg: "6" },
+    { msg: "7" },
+    { msg: "5", onlyIfChanges: true },
     { cmd: "1" },
   ],
+  finally: [{ msg: "8" }],
 };
 
 function type(tab: { handleInput(data: string): boolean }, text: string): void {
@@ -108,15 +110,16 @@ describe("WorkflowTab", () => {
 
   it("loads the configured workflow into the draft", () => {
     expect(tab.draft.rounds).toBe(2);
-    expect(tab.draft.start).toEqual(["1", "2", "3", "4", "5"]);
+    expect(tab.draft.start).toEqual([{ msg: "1" }, { msg: "2" }, { msg: "3" }, { msg: "4" }, { msg: "5" }]);
     expect(tab.draft.tree).toBe("1");
     expect(tab.draft.loop).toEqual([
       { cmd: "1" },
-      { send: "6" },
-      { send: "7" },
-      { send: "5", onlyIfChanges: true },
+      { msg: "6" },
+      { msg: "7" },
+      { msg: "5", onlyIfChanges: true },
       { cmd: "1" },
     ]);
+    expect(tab.draft.finally).toEqual([{ msg: "8" }]);
     expect(tab.dirty).toBe(false);
   });
 
@@ -139,19 +142,19 @@ describe("WorkflowTab", () => {
     expect(tab.getAboveContentLine(80)).toContain("Index must be a number");
   });
 
-  it("edits a start index", () => {
+  it("edits a start msg index", () => {
     tab.handleInput("e");
     tab.handleInput("9");
     tab.handleInput("\r");
-    expect(tab.draft.start[0]).toBe("9");
+    expect(tab.draft.start[0]).toEqual({ msg: "9" });
   });
 
-  it("edits a send step index", () => {
+  it("edits a msg step index", () => {
     for (let i = 0; i < 7; i++) tab.handleInput("j");
     tab.handleInput("e");
     tab.handleInput("7");
     tab.handleInput("\r");
-    expect(tab.draft.loop[1]).toEqual({ send: "7" });
+    expect(tab.draft.loop[1]).toEqual({ msg: "7" });
   });
 
   it("edits a cmd step index", () => {
@@ -162,12 +165,12 @@ describe("WorkflowTab", () => {
     expect(tab.draft.loop[0]).toEqual({ cmd: "2" });
   });
 
-  it("adds a send step", () => {
+  it("adds a msg step", () => {
     for (let i = 0; i < 7; i++) tab.handleInput("j");
     tab.handleInput("a");
-    type(tab, "send 4");
+    type(tab, "msg 4");
     tab.handleInput("\r");
-    expect(tab.draft.loop[tab.draft.loop.length - 1]).toEqual({ send: "4" });
+    expect(tab.draft.loop[tab.draft.loop.length - 1]).toEqual({ msg: "4" });
     expect(tab.draft.loop).toHaveLength(6);
   });
 
@@ -179,13 +182,123 @@ describe("WorkflowTab", () => {
     expect(tab.draft.loop[tab.draft.loop.length - 1]).toEqual({ cmd: "2" });
   });
 
+  it("adds a start step", () => {
+    tab.handleInput("a");
+    type(tab, "msg 4");
+    tab.handleInput("\r");
+    expect(tab.draft.start[tab.draft.start.length - 1]).toEqual({ msg: "4" });
+  });
+
+  it("adds a cmd step to the start phase", () => {
+    tab.handleInput("a");
+    type(tab, "cmd 2");
+    tab.handleInput("\r");
+    expect(tab.draft.start[tab.draft.start.length - 1]).toEqual({ cmd: "2" });
+  });
+
+  it("rejects an invalid added start step", () => {
+    tab.handleInput("a");
+    type(tab, "bogus");
+    tab.handleInput("\r");
+    expect(tab.draft.start).toHaveLength(5);
+    expect(tab.getAboveContentLine(80)).toContain("Expected: msg <number> or cmd <number>");
+  });
+
+  it("edits a start cmd index", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ ...WORKFLOW_JSON, start: [{ msg: "1" }, { cmd: "1" }] });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any, notify);
+    tab.handleInput("j");
+    tab.handleInput("e");
+    type(tab, "2");
+    tab.handleInput("\r");
+    expect(tab.draft.start[1]).toEqual({ cmd: "2" });
+  });
+
+  it("saves start cmd steps to workflow.json", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify(WORKFLOW_JSON);
+      if (String(path).includes("commands.json")) return JSON.stringify({ "1": "git add .", "2": "git status --porcelain" });
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any, notify);
+    tab.handleInput("a");
+    type(tab, "cmd 2");
+    tab.handleInput("\r");
+    tab.save();
+    const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
+    expect(written.start[written.start.length - 1]).toEqual({ cmd: "2" });
+  });
+
+  it("adds a finally step", () => {
+    for (let i = 0; i < 11; i++) tab.handleInput("j");
+    tab.handleInput("a");
+    type(tab, "msg 4");
+    tab.handleInput("\r");
+    expect(tab.draft.finally[tab.draft.finally.length - 1]).toEqual({ msg: "4" });
+  });
+
+  it("edits a finally msg index", () => {
+    for (let i = 0; i < 11; i++) tab.handleInput("j");
+    tab.handleInput("e");
+    tab.handleInput("9");
+    tab.handleInput("\r");
+    expect(tab.draft.finally[0]).toEqual({ msg: "9" });
+  });
+
+  it("deletes a finally step", () => {
+    for (let i = 0; i < 11; i++) tab.handleInput("j");
+    tab.handleInput("x");
+    expect(tab.draft.finally).toEqual([]);
+    expect(tab.dirty).toBe(true);
+  });
+
+  it("moves a finally step", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ ...WORKFLOW_JSON, finally: [{ msg: "8" }, { cmd: "1" }] });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any, notify);
+    for (let i = 0; i < 11; i++) tab.handleInput("j");
+    tab.handleInput("J");
+    expect(tab.draft.finally[0]).toEqual({ cmd: "1" });
+    expect(tab.draft.finally[1]).toEqual({ msg: "8" });
+  });
+
+  it("refuses if-changes on a finally step", () => {
+    for (let i = 0; i < 11; i++) tab.handleInput("j");
+    tab.handleInput("t");
+    expect(tab.draft.finally[0]).toEqual({ msg: "8" });
+    expect(tab.getAboveContentLine(80)).toContain("if-changes applies to loop msg steps");
+  });
+
+  it("saves finally steps to workflow.json", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify(WORKFLOW_JSON);
+      if (String(path).includes("commands.json")) return JSON.stringify({ "1": "git add .", "2": "git status --porcelain" });
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any, notify);
+    for (let i = 0; i < 11; i++) tab.handleInput("j");
+    tab.handleInput("a");
+    type(tab, "cmd 2");
+    tab.handleInput("\r");
+    tab.save();
+    const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
+    expect(written.finally[written.finally.length - 1]).toEqual({ cmd: "2" });
+  });
+
   it("rejects an invalid added step", () => {
     for (let i = 0; i < 7; i++) tab.handleInput("j");
     tab.handleInput("a");
     type(tab, "bogus");
     tab.handleInput("\r");
     expect(tab.draft.loop).toHaveLength(5);
-    expect(tab.getAboveContentLine(80)).toContain("Expected: send <number> or cmd <number>");
+    expect(tab.getAboveContentLine(80)).toContain("Expected: msg <number> or cmd <number>");
   });
 
   it("cannot add a step on the tree row", () => {
@@ -211,13 +324,13 @@ describe("WorkflowTab", () => {
 
   it("moves a start row down", () => {
     tab.handleInput("J");
-    expect(tab.draft.start).toEqual(["2", "1", "3", "4", "5"]);
+    expect(tab.draft.start).toEqual([{ msg: "2" }, { msg: "1" }, { msg: "3" }, { msg: "4" }, { msg: "5" }]);
   });
 
   it("moves a loop row down", () => {
     for (let i = 0; i < 6; i++) tab.handleInput("j");
     tab.handleInput("J");
-    expect(tab.draft.loop[0]).toEqual({ send: "6" });
+    expect(tab.draft.loop[0]).toEqual({ msg: "6" });
     expect(tab.draft.loop[1]).toEqual({ cmd: "1" });
   });
 
@@ -228,19 +341,19 @@ describe("WorkflowTab", () => {
     expect(tab.getAboveContentLine(80)).toContain("tree step is fixed");
   });
 
-  it("toggles if-changes on a send step", () => {
+  it("toggles if-changes on a msg step", () => {
     for (let i = 0; i < 7; i++) tab.handleInput("j");
     tab.handleInput("t");
-    expect(tab.draft.loop[1]).toEqual({ send: "6", onlyIfChanges: true });
+    expect(tab.draft.loop[1]).toEqual({ msg: "6", onlyIfChanges: true });
     tab.handleInput("t");
-    expect(tab.draft.loop[1]).toEqual({ send: "6" });
+    expect(tab.draft.loop[1]).toEqual({ msg: "6" });
   });
 
   it("refuses if-changes on a cmd step", () => {
     for (let i = 0; i < 6; i++) tab.handleInput("j");
     tab.handleInput("t");
     expect(tab.draft.loop[0]).toEqual({ cmd: "1" });
-    expect(tab.getAboveContentLine(80)).toContain("if-changes applies to send steps");
+    expect(tab.getAboveContentLine(80)).toContain("if-changes applies to loop msg steps");
   });
 
   it("adjusts and clamps rounds", () => {
@@ -264,6 +377,7 @@ describe("WorkflowTab", () => {
     expect(written.rounds).toBe(2);
     expect(written.loop[0]).toEqual({ tree: "2" });
     expect(written.loop[1]).toEqual({ cmd: "1" });
+    expect(written.finally).toEqual([{ msg: "8" }]);
     expect(tab.dirty).toBe(false);
     expect(notify).toHaveBeenCalledWith("workflow.json saved", "info");
   });
@@ -303,7 +417,7 @@ describe("WorkflowTab", () => {
     tab.handleInput("e");
     tab.handleInput("9");
     tab.handleInput("\x1b");
-    expect(tab.draft.start[0]).toBe("1");
+    expect(tab.draft.start[0]).toEqual({ msg: "1" });
     expect(tab.dirty).toBe(false);
   });
 
@@ -314,17 +428,22 @@ describe("WorkflowTab", () => {
 
   it("moves a row with J sent as a Kitty CSI-u sequence", () => {
     tab.handleInput("\x1b[74;2u");
-    expect(tab.draft.start).toEqual(["2", "1", "3", "4", "5"]);
+    expect(tab.draft.start).toEqual([{ msg: "2" }, { msg: "1" }, { msg: "3" }, { msg: "4" }, { msg: "5" }]);
   });
 
   it("renders rows with previews", () => {
     const lines = tab.render(78, 12);
     expect(lines[0]).toContain("Rounds: 2");
     expect(lines.join("\n")).toContain("tree → 1");
-    expect(lines.join("\n")).toContain("send 6");
+    expect(lines.join("\n")).toContain("msg 6");
     expect(lines.join("\n")).toContain("cmd 1: git add .");
   });
 
+  it("renders the finally section", () => {
+    const lines = tab.render(78, 20);
+    expect(lines.join("\n")).toContain(" finally");
+    expect(lines.join("\n")).toContain("msg 8");
+  });
   it("shows the full message preview up to the window edge", () => {
     vi.mocked(readFileSync).mockImplementation((path: unknown) => {
       if (String(path).includes("workflow.json")) return JSON.stringify(WORKFLOW_JSON);
@@ -371,7 +490,7 @@ describe("MessagesTab", () => {
 
   it("loads messages into the draft", () => {
     expect(tab.draft).toEqual(MESSAGES);
-    expect(tab.keys).toEqual(["1", "2", "3", "4", "5", "6", "7"]);
+    expect(tab.keys).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
   });
 
   it("edits a message", () => {
@@ -394,14 +513,14 @@ describe("MessagesTab", () => {
     tab.handleInput("a");
     type(tab, "Brand new message");
     tab.handleInput("\r");
-    expect(tab.draft["8"]).toBe("Brand new message");
-    expect(tab.keys).toContain("8");
+    expect(tab.draft["9"]).toBe("Brand new message");
+    expect(tab.keys).toContain("9");
   });
 
   it("deletes a message", () => {
     tab.handleInput("x");
     expect(tab.draft["1"]).toBeUndefined();
-    expect(tab.keys).toEqual(["2", "3", "4", "5", "6", "7"]);
+    expect(tab.keys).toEqual(["2", "3", "4", "5", "6", "7", "8"]);
     expect(tab.dirty).toBe(true);
   });
 
