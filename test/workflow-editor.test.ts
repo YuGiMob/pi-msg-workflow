@@ -5,6 +5,8 @@ vi.mock("node:fs", () => ({
   writeFileSync: vi.fn(),
   renameSync: vi.fn(),
   existsSync: vi.fn(),
+  copyFileSync: vi.fn(),
+  mkdirSync: vi.fn(),
 }));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({}));
@@ -86,6 +88,7 @@ function createTheme() {
 function setupFs() {
   vi.mocked(existsSync).mockReturnValue(true);
   vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+    if (String(path).includes("defaults.json")) return JSON.stringify({ "workflow.json": "recorded", "messages.json": "recorded", "commands.json": "recorded" });
     if (String(path).includes("workflow.json")) return JSON.stringify(WORKFLOW_JSON);
     if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
     return JSON.stringify(MESSAGES);
@@ -220,6 +223,7 @@ describe("WorkflowTab", () => {
 
   it("saves start cmd steps to workflow.json", () => {
     vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("defaults.json")) return JSON.stringify({ "workflow.json": "recorded", "messages.json": "recorded", "commands.json": "recorded" });
       if (String(path).includes("workflow.json")) return JSON.stringify(WORKFLOW_JSON);
       if (String(path).includes("commands.json")) return JSON.stringify({ "1": "git add .", "2": "git status --porcelain" });
       return JSON.stringify(MESSAGES);
@@ -278,6 +282,7 @@ describe("WorkflowTab", () => {
 
   it("saves finally steps to workflow.json", () => {
     vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("defaults.json")) return JSON.stringify({ "workflow.json": "recorded", "messages.json": "recorded", "commands.json": "recorded" });
       if (String(path).includes("workflow.json")) return JSON.stringify(WORKFLOW_JSON);
       if (String(path).includes("commands.json")) return JSON.stringify({ "1": "git add .", "2": "git status --porcelain" });
       return JSON.stringify(MESSAGES);

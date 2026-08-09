@@ -12,6 +12,8 @@ vi.mock("node:fs", () => ({
   writeFileSync: vi.fn(),
   renameSync: vi.fn(),
   existsSync: vi.fn(),
+  copyFileSync: vi.fn(),
+  mkdirSync: vi.fn(),
 }));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
@@ -39,6 +41,7 @@ describe("messages extension", () => {
 
     vi.mocked(existsSync).mockReturnValue(true);
     vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("defaults.json")) return JSON.stringify({ "messages.json": "recorded", "commands.json": "recorded" });
       if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
       return JSON.stringify(MESSAGES);
     });
@@ -131,6 +134,7 @@ describe("messages extension", () => {
 
     it("writes store keys in numeric order", async () => {
       vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+        if (String(path).includes("defaults.json")) return JSON.stringify({ "messages.json": "recorded", "commands.json": "recorded" });
         if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
         return JSON.stringify({ "2": "second message", "1": "first message" });
       });

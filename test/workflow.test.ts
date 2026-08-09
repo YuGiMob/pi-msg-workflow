@@ -5,6 +5,8 @@ vi.mock("node:fs", () => ({
   writeFileSync: vi.fn(),
   renameSync: vi.fn(),
   existsSync: vi.fn(),
+  copyFileSync: vi.fn(),
+  mkdirSync: vi.fn(),
 }));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({}));

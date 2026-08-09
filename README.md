@@ -59,7 +59,7 @@ Saving the Workflow tab refuses indices that reference missing messages or comma
 
 ## Configuration
 
-The workflow is defined in `workflow.json` inside the package:
+The workflow is defined in `workflow.json` (see [Data location](#data-location)):
 
 ```json
 {
@@ -112,6 +112,12 @@ Ordered list of steps run once after the loop finishes. Each step is `{ "msg": "
 Command content is split on whitespace; single- and double-quoted arguments are supported (e.g. `git commit -m "fix"`), with `\"` and `\\` escapes inside double quotes. Unterminated quotes are rejected.
 
 Invalid config values are reported with a `[pi-msg-workflow]` warning and fall back to the defaults shown above.
+
+### Data location
+
+`workflow.json`, `messages.json` and `commands.json` live in `~/.config/pi-msg-workflow/`. On first use the packaged defaults are copied there; afterwards all reads and writes use the user copies, so updating the package never overwrites your customizations. If you previously edited these files inside the installed package, back them up before updating — npm replaces the package directory.
+
+Each user copy is tracked against the checksum of the packaged default it was synced with. A file that still matches that checksum is considered unmodified: when a package update ships a new default, the user copy is replaced automatically. Once you edit a file, it no longer matches and is never overwritten. For installs that predate this feature, a user copy that differs from the current default is treated as customized and left alone.
 
 ## Limitations
 

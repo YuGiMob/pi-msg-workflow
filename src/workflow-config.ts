@@ -1,7 +1,6 @@
 import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { MAX_ROUNDS } from "./constants.js";
+import { ensureUserData, ensureUserDataDir, userDataPath } from "./user-data.js";
 
 export interface LoopStep {
   tree?: string;
@@ -22,7 +21,7 @@ export interface WorkflowConfig {
   finally: StartStep[];
 }
 
-const WORKFLOW_FILE = join(dirname(fileURLToPath(import.meta.url)), "..", "workflow.json");
+const WORKFLOW_FILE = userDataPath("workflow.json");
 
 const DEFAULT_ROUNDS = 2;
 const DEFAULT_START: StartStep[] = [
@@ -71,6 +70,7 @@ export function getWorkflowConfig(): { config: WorkflowConfig; errors: string[] 
   const errors: string[] = [];
   let raw: unknown = null;
   try {
+    ensureUserData("workflow.json");
     if (existsSync(WORKFLOW_FILE)) {
       raw = JSON.parse(readFileSync(WORKFLOW_FILE, "utf-8"));
     }
@@ -134,6 +134,7 @@ export function getWorkflowConfig(): { config: WorkflowConfig; errors: string[] 
 }
 
 export function setWorkflowConfig(config: WorkflowConfig): void {
+  ensureUserDataDir();
   const tmp = `${WORKFLOW_FILE}.tmp`;
   writeFileSync(tmp, JSON.stringify(config, null, 2), "utf8");
   renameSync(tmp, WORKFLOW_FILE);

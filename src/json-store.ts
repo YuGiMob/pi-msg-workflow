@@ -1,14 +1,14 @@
 import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { ensureUserData, ensureUserDataDir, userDataPath } from "./user-data.js";
 
 export function createJsonStore(fileName: string): {
   get(): Record<string, string>;
   set(store: Record<string, string>): void;
 } {
-  const file = join(dirname(fileURLToPath(import.meta.url)), "..", fileName);
+  const file = userDataPath(fileName);
   return {
     get() {
+      ensureUserData(fileName);
       if (!existsSync(file)) return {};
       try {
         return JSON.parse(readFileSync(file, "utf-8").trim());
@@ -18,6 +18,7 @@ export function createJsonStore(fileName: string): {
       }
     },
     set(store) {
+      ensureUserDataDir();
       const sorted = Object.fromEntries(
         Object.entries(store).sort(([a], [b]) => {
           const na = Number(a);
