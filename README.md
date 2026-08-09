@@ -1,4 +1,4 @@
-# pi-workflow
+# pi-msg-workflow
 
 A [pi-coding-agent](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent) extension that combines two numbered stores — **messages** you send to the agent and **commands** the agent performs — with a fully configurable improvement workflow.
 
@@ -11,7 +11,7 @@ A [pi-coding-agent](https://github.com/badlogic/pi-mono/tree/main/packages/codin
 - **`/workflow [rounds]`** — runs the configured workflow: a start phase (msg/cmd steps), review rounds, and a finally phase. The whole sequence is defined in `workflow.json`, so you decide which messages or commands happen when. `/workflow dry` prints the resolved plan without running it.
 - **`/workflow-edit`** — opens an interactive editor overlay with three tabs: **[Workflow]** (rounds, start/loop/finally steps, tree anchor, add/delete/reorder, if-changes toggle), **[Messages]** and **[Commands]** (add, edit and delete store entries). Changes are saved with `s` (per tab) and closing with unsaved changes asks for confirmation.
 - **`/tree-jump <number>`** — resets the agent's context to the response of a predefined message (by its index). The workflow loop always begins with a tree step.
-- **`/workflow-stop`** — cancels a running workflow after the current step completes.
+- **`/workflow-stop`** — cancels a running workflow after the current step completes; reports when no workflow is running.
 - **Start-phase resume.** msg steps whose text matches the leading user messages of the session are skipped, so an interrupted workflow continues where it left off.
 - **Resilient sends.** Follow-ups are polled until they appear in the session branch (up to 3 attempts) before waiting for idle.
 - **Config validation.** Invalid `workflow.json` values are reported and fall back to safe defaults.
@@ -90,7 +90,7 @@ The workflow is defined in `workflow.json` (see [Data location](#data-location))
 Number of review-loop iterations (default `2`, max `5`). `/workflow <n>` overrides it for a single run. `/workflow dry` (or `/workflow --dry-run`) prints the resolved plan — rounds, start steps, loop steps and finally steps — without sending or executing anything.
 
 ### `start`
-Ordered list of steps run once before the loop begins. Each step is `{ "msg": "n" }` (send message n) or `{ "cmd": "n" }` (perform command n). msg steps whose text is already in the session are skipped, so a re-run resumes the phase instead of repeating it.
+Ordered list of steps run once before the loop begins. Each step is `{ "msg": "n" }` (send message n) or `{ "cmd": "n" }` (perform command n). msg steps whose text matches the leading user messages of the session are skipped, in order, so a re-run resumes the phase instead of repeating it. The skip stops at the first non-matching user message; cmd steps always re-run.
 
 ### `loop`
 
