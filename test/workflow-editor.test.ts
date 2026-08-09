@@ -17,8 +17,13 @@ vi.mock("@earendil-works/pi-tui", () => ({
     escape: "\x1b",
     enter: "\r",
     backspace: "\x7f",
+    delete: "\x1b[3~",
+    home: "\x1b[H",
+    end: "\x1b[F",
     up: "\x1b[A",
     down: "\x1b[B",
+    left: "\x1b[D",
+    right: "\x1b[C",
     shift: (key: string) => `shift-${key}`,
   },
   matchesKey: (data: string, key: any) => {
@@ -26,8 +31,13 @@ vi.mock("@earendil-works/pi-tui", () => ({
     if (key === "\x1b") return data === "\x1b";
     if (key === "\r") return data === "\r";
     if (key === "\x7f") return data === "\x7f";
+    if (key === "\x1b[3~") return data === "\x1b[3~";
+    if (key === "\x1b[H") return data === "\x1b[H";
+    if (key === "\x1b[F") return data === "\x1b[F";
     if (key === "\x1b[A") return data === "\x1b[A";
     if (key === "\x1b[B") return data === "\x1b[B";
+    if (key === "\x1b[D") return data === "\x1b[D";
+    if (key === "\x1b[C") return data === "\x1b[C";
     if (key === "shift-tab") return data === "\x1b[Z";
     if (key === "shift+j") return data === "J" || data === "\x1b[74;2u";
     if (key === "shift+k") return data === "K" || data === "\x1b[75;2u";
@@ -436,6 +446,73 @@ describe("WorkflowTab", () => {
     expect(tab.draft.start).toEqual([{ msg: "2" }, { msg: "1" }, { msg: "3" }, { msg: "4" }, { msg: "5" }]);
   });
 
+  it("undoes a deleted step", () => {
+    for (let i = 0; i < 6; i++) tab.handleInput("j");
+    tab.handleInput("x");
+    expect(tab.draft.loop).toHaveLength(4);
+    tab.handleInput("u");
+    expect(tab.draft.loop).toHaveLength(5);
+    expect(tab.draft.loop[0]).toEqual({ cmd: "1" });
+    expect(tab.dirty).toBe(false);
+  });
+  it("undoes an edited step index", () => {
+    tab.handleInput("e");
+    tab.handleInput("9");
+    tab.handleInput("\r");
+    expect(tab.draft.start[0]).toEqual({ msg: "9" });
+    tab.handleInput("u");
+    expect(tab.draft.start[0]).toEqual({ msg: "1" });
+  });
+  it("undoes a rounds change", () => {
+    tab.handleInput("]");
+    expect(tab.draft.rounds).toBe(3);
+    tab.handleInput("u");
+    expect(tab.draft.rounds).toBe(2);
+  });
+  it("undoes an added step", () => {
+    for (let i = 0; i < 7; i++) tab.handleInput("j");
+    tab.handleInput("a");
+    type(tab, "msg 4");
+    tab.handleInput("\r");
+    expect(tab.draft.loop).toHaveLength(6);
+    tab.handleInput("u");
+    expect(tab.draft.loop).toHaveLength(5);
+  });
+  it("flashes when there is nothing to undo", () => {
+    tab.handleInput("u");
+    expect(tab.getAboveContentLine(80)).toContain("Nothing to undo");
+  });
+  it("does not consume an undo slot when a move is refused", () => {
+    tab.handleInput("J");
+    tab.handleInput("K");
+    tab.handleInput("K");
+    tab.handleInput("u");
+    expect(tab.draft.start).toEqual([{ msg: "2" }, { msg: "1" }, { msg: "3" }, { msg: "4" }, { msg: "5" }]);
+  });
+  it("restores the selection when undoing", () => {
+    for (let i = 0; i < 11; i++) tab.handleInput("j");
+    tab.handleInput("x");
+    expect((tab as any).selection).toBe(10);
+    tab.handleInput("u");
+    expect((tab as any).selection).toBe(11);
+  });
+  it("clears the dirty flag when undoing back to the saved state", () => {
+    tab.handleInput("e");
+    tab.handleInput("2");
+    tab.handleInput("\r");
+    expect(tab.dirty).toBe(true);
+    tab.handleInput("u");
+    expect(tab.dirty).toBe(false);
+  });
+  it("keeps the tab dirty when undoing past a save", () => {
+    tab.handleInput("e");
+    tab.handleInput("2");
+    tab.handleInput("\r");
+    tab.save();
+    expect(tab.dirty).toBe(false);
+    tab.handleInput("u");
+    expect(tab.dirty).toBe(true);
+  });
   it("renders rows with previews", () => {
     const lines = tab.render(78, 12);
     expect(lines[0]).toContain("Rounds: 2");
@@ -448,6 +525,10 @@ describe("WorkflowTab", () => {
     const lines = tab.render(78, 20);
     expect(lines.join("\n")).toContain(" finally");
     expect(lines.join("\n")).toContain("msg 8");
+  });
+  it("renders the tree row with a message preview", () => {
+    const lines = tab.render(78, 12);
+    expect(lines.join("\n")).toContain(`tree → 1: ${MSG1}`);
   });
   it("shows the full message preview up to the window edge", () => {
     vi.mocked(readFileSync).mockImplementation((path: unknown) => {
@@ -585,6 +666,81 @@ describe("MessagesTab", () => {
     tab.handleInput("\r");
     expect(tab.draft["1"]).toBe("line one line two");
   });
+  it("inserts at the cursor position with arrow keys", () => {
+    tab.handleInput("e");
+    type(tab, "abcde");
+    tab.handleInput("\x1b[D");
+    tab.handleInput("\x1b[D");
+    type(tab, "X");
+    tab.handleInput("\r");
+    expect(tab.draft["1"]).toBe("abcXde");
+  });
+  it("moves the cursor with home and end", () => {
+    tab.handleInput("e");
+    type(tab, "bcdef");
+    tab.handleInput("\x1b[H");
+    type(tab, "a");
+    tab.handleInput("\x1b[F");
+    type(tab, "g");
+    tab.handleInput("\r");
+    expect(tab.draft["1"]).toBe("abcdefg");
+  });
+  it("deletes at the cursor with delete and backspace", () => {
+    tab.handleInput("e");
+    type(tab, "abcdefg");
+    tab.handleInput("\x1b[H");
+    tab.handleInput("\x1b[3~");
+    expect(tab.getAboveContentLine(80)).toContain("▏bcdefg");
+    tab.handleInput("\x1b[F");
+    tab.handleInput("\x7f");
+    tab.handleInput("\r");
+    expect(tab.draft["1"]).toBe("bcdef");
+  });
+  it("renders the cursor at the cursor position", () => {
+    tab.handleInput("e");
+    type(tab, "ab");
+    tab.handleInput("\x1b[D");
+    expect(tab.getAboveContentLine(80)).toContain("a▏b");
+  });
+  it("undoes a deleted message", () => {
+    tab.handleInput("x");
+    expect(tab.draft["1"]).toBeUndefined();
+    tab.handleInput("u");
+    expect(tab.draft["1"]).toBe(MSG1);
+    expect(tab.keys).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
+    expect(tab.dirty).toBe(false);
+  });
+  it("undoes an edited message", () => {
+    tab.handleInput("e");
+    type(tab, "New content here");
+    tab.handleInput("\r");
+    expect(tab.draft["1"]).toBe("New content here");
+    tab.handleInput("u");
+    expect(tab.draft["1"]).toBe(MSG1);
+  });
+  it("undoes an added message", () => {
+    tab.handleInput("a");
+    type(tab, "Brand new message");
+    tab.handleInput("\r");
+    expect(tab.draft["9"]).toBe("Brand new message");
+    tab.handleInput("u");
+    expect(tab.draft["9"]).toBeUndefined();
+    expect(tab.keys).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
+  });
+  it("clears the dirty flag when undoing back to the saved state", () => {
+    tab.handleInput("x");
+    tab.handleInput("u");
+    expect(tab.dirty).toBe(false);
+  });
+  it("keeps the tab dirty when undoing past a save", () => {
+    tab.handleInput("e");
+    type(tab, "New content here");
+    tab.handleInput("\r");
+    tab.save();
+    expect(tab.dirty).toBe(false);
+    tab.handleInput("u");
+    expect(tab.dirty).toBe(true);
+  });
 
   it("types Kitty CSI-u characters into the input", () => {
     tab.handleInput("e");
@@ -678,6 +834,12 @@ describe("CommandsTab", () => {
     expect(tab.draft["1"]).toBeUndefined();
     expect(tab.keys).toEqual([]);
     expect(tab.dirty).toBe(true);
+  });
+  it("undoes a deleted command", () => {
+    tab.handleInput("x");
+    tab.handleInput("u");
+    expect(tab.draft["1"]).toBe(COMMANDS["1"]);
+    expect(tab.keys).toEqual(["1"]);
   });
 
   it("saves commands to commands.json", () => {

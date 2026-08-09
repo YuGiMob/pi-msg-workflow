@@ -339,9 +339,10 @@ async function sendAndWaitForTurn(
 
 type TreeNavigationStatus = "ok" | "missing" | "not-found" | "cancelled";
 
-async function navigateToMessageAnchor(ctx: ExtensionCommandContext, index: string): Promise<TreeNavigationStatus> {
+async function navigateToMessageAnchor(ctx: ExtensionCommandContext, index: string, requirePresence = false): Promise<TreeNavigationStatus> {
   const text = getMessages()[index];
   if (!text) return "missing";
+  if (requirePresence && countUserTextMatches(ctx.sessionManager.getBranch(), text) === 0) return "not-found";
   const anchor = findAnchorAfterMessage(ctx.sessionManager.getBranch(), text);
   if (!anchor) return "not-found";
   const navigation = await ctx.navigateTree(anchor.id, { summarize: false });
@@ -423,7 +424,7 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("Usage: /tree-jump <number>", "warning");
         return;
       }
-      const status = await navigateToMessageAnchor(ctx, index);
+      const status = await navigateToMessageAnchor(ctx, index, true);
       if (!notifyNavigationStatus(ctx, index, status, "Navigation cancelled", "warning")) return;
       ctx.ui.notify(`Context reset to the response of message ${index}`, "info");
     },

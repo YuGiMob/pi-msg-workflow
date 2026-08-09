@@ -34,6 +34,11 @@ describe("createJsonStore", () => {
     expect(store.get()).toEqual({});
     spy.mockRestore();
   });
+  it("returns an empty store when the file is valid JSON but not an object", () => {
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify([1, 2, 3]) as never);
+    const store = createJsonStore("messages.json");
+    expect(store.get()).toEqual({});
+  });
 
   it("reads the store from the package root", () => {
     vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ "1": "hello" }) as never);

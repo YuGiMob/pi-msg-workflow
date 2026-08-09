@@ -11,7 +11,10 @@ export function createJsonStore(fileName: string): {
       ensureUserData(fileName);
       if (!existsSync(file)) return {};
       try {
-        return JSON.parse(readFileSync(file, "utf-8").trim());
+        const parsed = JSON.parse(readFileSync(file, "utf-8").trim());
+        return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+          ? (parsed as Record<string, string>)
+          : {};
       } catch (err) {
         console.error(`Failed to read ${fileName}:`, err);
         return {};

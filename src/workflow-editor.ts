@@ -20,6 +20,7 @@ export type Notify = (text: string, kind: "info" | "warning" | "error") => void;
 interface InputState {
   prompt: string;
   buffer: string;
+  cursor: number;
   commit(value: string): string | null;
 }
 
@@ -79,6 +80,15 @@ function wrapText(text: string, width: number): string[] {
   return lines;
 }
 
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  const aKeys = Object.keys(a).sort();
+  const bKeys = Object.keys(b).sort();
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((key, i) => key === bKeys[i] && deepEqual((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
+}
+
 abstract class BaseEditorTab implements EditorTab {
   abstract readonly name: string;
   abstract readonly footerHints: string;
@@ -86,6 +96,7 @@ abstract class BaseEditorTab implements EditorTab {
   protected flash: string | null = null;
   protected input: InputState | null = null;
   private flashTimer: ReturnType<typeof setTimeout> | undefined;
+  private undoStack: unknown[] = [];
 
   protected setFlash(text: string): void {
     this.flash = text;
@@ -95,8 +106,17 @@ abstract class BaseEditorTab implements EditorTab {
     }, FLASH_MS);
   }
 
+  protected pushUndo(snapshot: unknown): void {
+    this.undoStack.push(snapshot);
+    if (this.undoStack.length > 50) this.undoStack.shift();
+  }
+
+  protected popUndo(): unknown | undefined {
+    return this.undoStack.pop();
+  }
+
   protected startInput(prompt: string, commit: (value: string) => string | null): void {
-    this.input = { prompt, buffer: "", commit };
+    this.input = { prompt, buffer: "", cursor: 0, commit };
   }
 
   protected handleInputMode(data: string): boolean {
@@ -112,27 +132,56 @@ abstract class BaseEditorTab implements EditorTab {
       return true;
     }
     if (matchesKey(data, Key.backspace)) {
-      this.input.buffer = this.input.buffer.slice(0, -1);
+      if (this.input.cursor > 0) {
+        this.input.buffer = this.input.buffer.slice(0, this.input.cursor - 1) + this.input.buffer.slice(this.input.cursor);
+        this.input.cursor--;
+      }
+      return true;
+    }
+    if (matchesKey(data, Key.delete)) {
+      if (this.input.cursor < this.input.buffer.length) {
+        this.input.buffer = this.input.buffer.slice(0, this.input.cursor) + this.input.buffer.slice(this.input.cursor + 1);
+      }
+      return true;
+    }
+    if (matchesKey(data, Key.left)) {
+      this.input.cursor = Math.max(0, this.input.cursor - 1);
+      return true;
+    }
+    if (matchesKey(data, Key.right)) {
+      this.input.cursor = Math.min(this.input.buffer.length, this.input.cursor + 1);
+      return true;
+    }
+    if (matchesKey(data, Key.home)) {
+      this.input.cursor = 0;
+      return true;
+    }
+    if (matchesKey(data, Key.end)) {
+      this.input.cursor = this.input.buffer.length;
       return true;
     }
     if (data.startsWith(PASTE_START) && data.endsWith(PASTE_END)) {
-      this.input.buffer += data.slice(PASTE_START.length, -PASTE_END.length).replace(/[\r\n]+/g, " ");
+      const pasted = data.slice(PASTE_START.length, -PASTE_END.length).replace(/[\r\n]+/g, " ");
+      this.input.buffer = this.input.buffer.slice(0, this.input.cursor) + pasted + this.input.buffer.slice(this.input.cursor);
+      this.input.cursor += pasted.length;
       return true;
     }
     const kittyPrintable = decodeKittyPrintable(data);
     if (kittyPrintable !== undefined) {
-      this.input.buffer += kittyPrintable;
+      this.input.buffer = this.input.buffer.slice(0, this.input.cursor) + kittyPrintable + this.input.buffer.slice(this.input.cursor);
+      this.input.cursor += kittyPrintable.length;
       return true;
     }
     if (data.length === 1 && data.charCodeAt(0) >= 32) {
-      this.input.buffer += data;
+      this.input.buffer = this.input.buffer.slice(0, this.input.cursor) + data + this.input.buffer.slice(this.input.cursor);
+      this.input.cursor += 1;
       return true;
     }
     return true;
   }
 
   getAboveContentLine(_innerWidth: number): string | null {
-    if (this.input) return ` ${this.input.prompt}${this.input.buffer}▏`;
+    if (this.input) return ` ${this.input.prompt}${this.input.buffer.slice(0, this.input.cursor)}▏${this.input.buffer.slice(this.input.cursor)}`;
     if (this.flash) return ` ${this.flash}`;
     return null;
   }
@@ -150,13 +199,16 @@ interface WorkflowDraft {
   finally: LoopStep[];
 }
 
+type WorkflowSnapshot = WorkflowDraft & { selection: number };
+
 type SelectableKind = "start" | "tree" | "loop" | "finally";
 
 export class WorkflowTab extends BaseEditorTab implements EditorTab {
   readonly name = "Workflow";
-  readonly footerHints = "j/k sel · e edit · a add · x del · J/K move · t if-chg · [ ] rnds · s save";
+  readonly footerHints = "j/k sel · e edit · a add · x del · J/K move · t if-chg · [ ] rnds · u undo · s save";
   readonly draft: WorkflowDraft;
   private selection = 0;
+  private savedSnapshot: WorkflowSnapshot;
 
   constructor(private readonly theme: Theme, private readonly notify: Notify) {
     super();
@@ -168,6 +220,44 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       loop: config.loop.slice(1).map((step) => ({ ...step })),
       finally: config.finally.map((step) => ({ ...step })),
     };
+    this.savedSnapshot = this.snapshot();
+  }
+
+  private snapshot(): WorkflowSnapshot {
+    return {
+      rounds: this.draft.rounds,
+      start: this.draft.start.map((step) => ({ ...step })),
+      tree: this.draft.tree,
+      loop: this.draft.loop.map((step) => ({ ...step })),
+      finally: this.draft.finally.map((step) => ({ ...step })),
+      selection: this.selection,
+    };
+  }
+  private restore(snap: WorkflowSnapshot): void {
+    this.draft.rounds = snap.rounds;
+    this.draft.start = snap.start;
+    this.draft.tree = snap.tree;
+    this.draft.loop = snap.loop;
+    this.draft.finally = snap.finally;
+    this.selection = Math.min(snap.selection, this.rowCount() - 1);
+  }
+  private equalsSaved(): boolean {
+    const current = this.snapshot();
+    return current.rounds === this.savedSnapshot.rounds
+      && current.tree === this.savedSnapshot.tree
+      && deepEqual(current.start, this.savedSnapshot.start)
+      && deepEqual(current.loop, this.savedSnapshot.loop)
+      && deepEqual(current.finally, this.savedSnapshot.finally);
+  }
+  private undo(): void {
+    const snap = this.popUndo();
+    if (snap === undefined) {
+      this.setFlash("Nothing to undo");
+      return;
+    }
+    this.restore(snap as WorkflowSnapshot);
+    this.dirty = !this.equalsSaved();
+    this.setFlash(this.dirty ? "Undone (press s to save)" : "Undone");
   }
 
   private rowCount(): number {
@@ -225,12 +315,18 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       this.toggleIfChanges(kind, position);
       return true;
     }
+    if (matchesKey(data, "u")) {
+      this.undo();
+      return true;
+    }
     if (matchesKey(data, "[")) {
+      this.pushUndo(this.snapshot());
       this.draft.rounds = Math.max(1, this.draft.rounds - 1);
       this.dirty = true;
       return true;
     }
     if (matchesKey(data, "]")) {
+      this.pushUndo(this.snapshot());
       this.draft.rounds = Math.min(MAX_ROUNDS, this.draft.rounds + 1);
       this.dirty = true;
       return true;
@@ -247,6 +343,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     this.startInput(`${label} index for ${action} step (current: ${current}): `, (value) => {
       const index = value.trim();
       if (!/^\d+$/.test(index)) return "Index must be a number.";
+      this.pushUndo(this.snapshot());
       const step = target[position]!;
       target[position] = action === "msg" ? { ...step, msg: index } : { ...step, cmd: index };
       this.dirty = true;
@@ -269,6 +366,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       this.startInput(`tree anchor message index (current: ${current}): `, (value) => {
         const index = value.trim();
         if (!/^\d+$/.test(index)) return "Index must be a number.";
+        this.pushUndo(this.snapshot());
         this.draft.tree = index;
         this.dirty = true;
         return null;
@@ -300,6 +398,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       const text = value.trim();
       const msgMatch = text.match(/^msg\s+(\d+)$/);
       if (msgMatch) {
+        this.pushUndo(this.snapshot());
         target.push({ msg: msgMatch[1]! });
         select();
         this.dirty = true;
@@ -307,6 +406,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       }
       const cmdMatch = text.match(/^cmd\s+(\d+)$/);
       if (cmdMatch) {
+        this.pushUndo(this.snapshot());
         target.push({ cmd: cmdMatch[1]! });
         select();
         this.dirty = true;
@@ -343,6 +443,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       this.setFlash("The tree step is fixed as the first loop step");
       return;
     }
+    this.pushUndo(this.snapshot());
     if (kind === "start") {
       this.draft.start.splice(position, 1);
     } else if (kind === "loop") {
@@ -368,7 +469,9 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       return;
     }
     const target = kind === "start" ? this.draft.start : kind === "loop" ? this.draft.loop : this.draft.finally;
+    const snap = this.snapshot();
     if (!this.swapRows(target, position, delta)) return;
+    this.pushUndo(snap);
     this.selection += delta;
     this.dirty = true;
   }
@@ -383,6 +486,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       this.setFlash("if-changes applies to loop msg steps");
       return;
     }
+    this.pushUndo(this.snapshot());
     this.draft.loop[position] = step.onlyIfChanges ? { msg: step.msg } : { ...step, onlyIfChanges: true };
     this.dirty = true;
   }
@@ -423,6 +527,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       this.setFlash(`Could not save workflow.json: ${err instanceof Error ? err.message : String(err)}`);
       return;
     }
+    this.savedSnapshot = this.snapshot();
     this.dirty = false;
     this.setFlash("workflow.json saved");
     this.notify("workflow.json saved", "info");
@@ -449,7 +554,8 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       }
     });
     lines.push(th.fg("dim", " loop"));
-    row(`tree → ${this.draft.tree}  (fixed first)`, this.selection === this.draft.start.length);
+    const treePreview = messages[this.draft.tree] ? messages[this.draft.tree]! : "(missing)";
+    row(`tree → ${this.draft.tree}: ${treePreview}  (fixed first)`, this.selection === this.draft.start.length);
     this.draft.loop.forEach((step, i) => {
       const selected = this.selection === this.draft.start.length + 1 + i;
       if (step.msg !== undefined) {
@@ -480,6 +586,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
   readonly keys: string[];
   private selection = 0;
   private scroll = 0;
+  private savedSnapshot: { draft: Record<string, string>; keys: string[] };
 
   protected constructor(
     private readonly theme: Theme,
@@ -490,8 +597,32 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
     super();
     this.draft = { ...this.load() };
     this.keys = Object.keys(this.draft).sort((a, b) => Number(a) - Number(b));
+    this.savedSnapshot = { draft: { ...this.draft }, keys: [...this.keys] };
   }
 
+  private snapshot(): { draft: Record<string, string>; keys: string[]; selection: number } {
+    return { draft: { ...this.draft }, keys: [...this.keys], selection: this.selection };
+  }
+  private restore(snap: { draft: Record<string, string>; keys: string[]; selection: number }): void {
+    for (const key of Object.keys(this.draft)) delete this.draft[key];
+    Object.assign(this.draft, snap.draft);
+    this.keys.length = 0;
+    this.keys.push(...snap.keys);
+    this.selection = Math.min(snap.selection, Math.max(0, this.keys.length - 1));
+  }
+  private equalsSaved(): boolean {
+    return deepEqual(this.draft, this.savedSnapshot.draft);
+  }
+  private undo(): void {
+    const snap = this.popUndo();
+    if (snap === undefined) {
+      this.setFlash("Nothing to undo");
+      return;
+    }
+    this.restore(snap as { draft: Record<string, string>; keys: string[]; selection: number });
+    this.dirty = !this.equalsSaved();
+    this.setFlash(this.dirty ? "Undone (press s to save)" : "Undone");
+  }
   protected abstract load(): Record<string, string>;
   protected abstract write(store: Record<string, string>): void;
   protected abstract referenced(config: WorkflowConfig): string[];
@@ -520,6 +651,10 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
       this.deleteSelected();
       return true;
     }
+    if (matchesKey(data, "u")) {
+      this.undo();
+      return true;
+    }
     if (matchesKey(data, "s")) {
       this.save();
       return true;
@@ -544,6 +679,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
     this.startInput(`content for ${this.noun.toLowerCase()} ${key} (current: ${truncate(this.draft[key]!, 30)}): `, (value) => {
       const content = value.trim();
       if (content.length < 5) return `${this.noun} must be at least 5 characters.`;
+      this.pushUndo(this.snapshot());
       this.draft[key] = content;
       this.dirty = true;
       return null;
@@ -555,6 +691,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
     this.startInput(`content for new ${this.noun.toLowerCase()} ${key}: `, (value) => {
       const content = value.trim();
       if (content.length < 5) return `${this.noun} must be at least 5 characters.`;
+      this.pushUndo(this.snapshot());
       this.draft[key] = content;
       this.keys.push(key);
       this.keys.sort((a, b) => Number(a) - Number(b));
@@ -566,6 +703,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
 
   private deleteSelected(): void {
     if (this.keys.length === 0) return;
+    this.pushUndo(this.snapshot());
     const key = this.keys[this.selection]!;
     delete this.draft[key];
     this.keys.splice(this.selection, 1);
@@ -587,6 +725,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
       this.setFlash(`Could not save ${this.fileLabel}: ${err instanceof Error ? err.message : String(err)}`);
       return;
     }
+    this.savedSnapshot = { draft: { ...this.draft }, keys: [...this.keys] };
     this.dirty = false;
     this.setFlash(`${this.fileLabel} saved`);
     this.notify(`${this.fileLabel} saved`, "info");
@@ -631,7 +770,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
 
 export class MessagesTab extends StoreTab {
   constructor(theme: Theme, notify: Notify) {
-    super(theme, notify, "Messages", "j/k sel · e edit · a add · x del · s save");
+    super(theme, notify, "Messages", "j/k sel · e edit · a add · x del · u undo · s save");
   }
   protected load(): Record<string, string> {
     return getMessages();
@@ -648,7 +787,7 @@ export class MessagesTab extends StoreTab {
 
 export class CommandsTab extends StoreTab {
   constructor(theme: Theme, notify: Notify) {
-    super(theme, notify, "Commands", "j/k sel · e edit · a add · x del · s save");
+    super(theme, notify, "Commands", "j/k sel · e edit · a add · x del · u undo · s save");
   }
   protected load(): Record<string, string> {
     return getCommands();

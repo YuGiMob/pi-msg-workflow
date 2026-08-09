@@ -746,6 +746,12 @@ describe("/tree-jump command", () => {
     expect(ctx.ui.notify).toHaveBeenCalledWith("Could not find message 2 in the session.", "warning");
     expect(ctx.navigateTree).not.toHaveBeenCalled();
   });
+  it("warns when the message is absent even with other user messages present", async () => {
+    const ctx = createCtx([userEntry("u1", MSG1), assistantEntry("a1"), userEntry("u2", MSG2), assistantEntry("a2")]);
+    await commands["tree-jump"].handler("3", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Could not find message 3 in the session.", "warning");
+    expect(ctx.navigateTree).not.toHaveBeenCalled();
+  });
 
   it("navigates to the anchor of the message response", async () => {
     const ctx = createCtx(fullPhaseA());
