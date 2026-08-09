@@ -1,5 +1,5 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { Key, decodeKittyPrintable, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
+import { Key, decodeKittyPrintable, matchesKey, visibleWidth, type OverlayHandle, type TUI } from "@earendil-works/pi-tui";
 import { getMessages, setMessages } from "./messages.js";
 import { getCommands, setCommands } from "./commands.js";
 import { MAX_ROUNDS } from "./constants.js";
@@ -25,7 +25,10 @@ interface InputState {
 }
 
 const CONTENT_HEIGHT = 24;
+const CHROME_ROWS = 7;
+export const MAX_OVERLAY_HEIGHT_RATIO = 0.9;
 const FLASH_MS = 2500;
+const CONFIRM_POPUP_MS = 5000;
 const PASTE_START = "\x1b[200~";
 const PASTE_END = "\x1b[201~";
 
@@ -74,6 +77,23 @@ function wrapText(text: string, width: number): string[] {
       }
     } else {
       current = word;
+    }
+  }
+  if (current !== "") lines.push(current);
+  return lines;
+}
+
+function wrapHint(text: string, width: number): string[] {
+  const segments = text.split(" · ");
+  const lines: string[] = [];
+  let current = "";
+  for (const segment of segments) {
+    const candidate = current === "" ? segment : `${current} · ${segment}`;
+    if (visibleWidth(candidate) <= width) {
+      current = candidate;
+    } else {
+      if (current !== "") lines.push(current);
+      current = segment;
     }
   }
   if (current !== "") lines.push(current);
@@ -806,13 +826,46 @@ export interface WorkflowEditorOverlayOptions {
   title: string;
   tabs: EditorTab[];
   theme: Theme;
+  tui: TUI;
   done: () => void;
-  onNotify: Notify;
+}
+
+class ConfirmClosePopup {
+  constructor(
+    private readonly theme: Theme,
+    private readonly text: string,
+    private readonly onConfirm: () => void,
+    private readonly onDismiss: () => void,
+  ) {}
+
+  handleInput(data: string): void {
+    if (matchesKey(data, Key.escape) || matchesKey(data, "q")) {
+      this.onConfirm();
+    } else {
+      this.onDismiss();
+    }
+  }
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    const th = this.theme;
+    const innerW = width - 2;
+    const pad = (text: string) => text + " ".repeat(Math.max(0, innerW - visibleWidth(text)));
+    const row = (content: string) => th.fg("border", "│") + pad(content) + th.fg("border", "│");
+    return [
+      th.fg("border", `╭${"─".repeat(innerW)}╮`),
+      row(` ${th.fg("warning", this.text)}`),
+      row(th.fg("dim", " q to close · any other key to keep editing")),
+      th.fg("border", `╰${"─".repeat(innerW)}╯`),
+    ];
+  }
 }
 
 export class WorkflowEditorOverlay {
   private activeTab = 0;
-  private confirmingClose = false;
+  private confirmPopupHandle: OverlayHandle | undefined;
+  private confirmPopupTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly opts: WorkflowEditorOverlayOptions) {}
 
@@ -820,36 +873,59 @@ export class WorkflowEditorOverlay {
     return this.opts.tabs[this.activeTab]!;
   }
 
+  private hideConfirmPopup(): void {
+    if (this.confirmPopupTimer) {
+      clearTimeout(this.confirmPopupTimer);
+      this.confirmPopupTimer = undefined;
+    }
+    this.confirmPopupHandle?.hide();
+    this.confirmPopupHandle = undefined;
+  }
+
+  private showConfirmPopup(): void {
+    if (this.confirmPopupHandle) return;
+    const text = "Unsaved changes - press q again to close";
+    const popup = new ConfirmClosePopup(
+      this.opts.theme,
+      text,
+      () => {
+        this.hideConfirmPopup();
+        this.opts.done();
+      },
+      () => {
+        this.hideConfirmPopup();
+      },
+    );
+    this.confirmPopupHandle = this.opts.tui.showOverlay(popup, {
+      anchor: "center",
+      width: Math.min(60, visibleWidth(text) + 10),
+    });
+    this.confirmPopupTimer = setTimeout(() => {
+      this.hideConfirmPopup();
+    }, CONFIRM_POPUP_MS);
+  }
+
   handleInput(data: string): void {
     const consumed = this.active.handleInput(data);
     if (consumed) {
-      this.confirmingClose = false;
       return;
     }
     if (matchesKey(data, Key.tab)) {
       this.activeTab = (this.activeTab + 1) % this.opts.tabs.length;
-      this.confirmingClose = false;
       return;
     }
     if (matchesKey(data, Key.shift("tab"))) {
       this.activeTab = (this.activeTab - 1 + this.opts.tabs.length) % this.opts.tabs.length;
-      this.confirmingClose = false;
       return;
     }
     if (matchesKey(data, Key.escape) || matchesKey(data, "q")) {
-      if (this.confirmingClose) {
-        this.opts.done();
-        return;
-      }
       if (this.opts.tabs.some((tab) => tab.dirty)) {
-        this.confirmingClose = true;
-        this.opts.onNotify("Unsaved changes - press q again to close", "warning");
+        this.showConfirmPopup();
         return;
       }
       this.opts.done();
       return;
     }
-    this.confirmingClose = false;
   }
 
   invalidate(): void {}
@@ -857,6 +933,11 @@ export class WorkflowEditorOverlay {
   render(width: number): string[] {
     const th = this.opts.theme;
     const innerW = width - 2;
+    const hintParts = [this.opts.tabs.length > 1 ? "Tab" : "", this.active.footerHints, "q close"].filter(Boolean);
+    const hintLines = wrapHint(` ${hintParts.join(" · ")}`, innerW);
+    const maxHeight = Math.floor(this.opts.tui.terminal.rows * MAX_OVERLAY_HEIGHT_RATIO);
+    const chromeRows = CHROME_ROWS + hintLines.length - 1;
+    const contentHeight = Math.max(1, Math.min(CONTENT_HEIGHT, maxHeight - chromeRows));
     const lines: string[] = [];
     const pad = (text: string) => text + " ".repeat(Math.max(0, innerW - visibleWidth(text)));
     const row = (content: string) => th.fg("border", "│") + pad(content) + th.fg("border", "│");
@@ -879,14 +960,15 @@ export class WorkflowEditorOverlay {
     const aboveLine = this.active.getAboveContentLine(innerW);
     lines.push(aboveLine !== null ? row(truncate(` ${aboveLine}`, innerW)) : borderSep);
 
-    const contentLines = this.active.render(innerW, CONTENT_HEIGHT);
-    for (let i = 0; i < CONTENT_HEIGHT; i++) {
+    const contentLines = this.active.render(innerW, contentHeight);
+    for (let i = 0; i < contentHeight; i++) {
       lines.push(row(contentLines[i] ?? ""));
     }
 
     lines.push(borderSep);
-    const hintParts = [this.opts.tabs.length > 1 ? "Tab" : "", this.active.footerHints, "q close"].filter(Boolean);
-    lines.push(row(th.fg("dim", truncate(` ${hintParts.join(" · ")}`, innerW))));
+    for (const hintLine of hintLines) {
+      lines.push(row(th.fg("dim", hintLine)));
+    }
     lines.push(borderBottom);
     return lines;
   }

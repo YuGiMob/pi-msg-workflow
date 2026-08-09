@@ -5,7 +5,7 @@ import { getCommands, setCommands } from "./src/commands.js";
 import { MAX_ROUNDS } from "./src/constants.js";
 import { runCommand, commandFailureMessage } from "./src/command-runner.js";
 import { getWorkflowConfig, referencedIndices, referencedCommands, type StartStep } from "./src/workflow-config.js";
-import { WorkflowEditorOverlay, WorkflowTab, MessagesTab, CommandsTab, type EditorTab } from "./src/workflow-editor.js";
+import { WorkflowEditorOverlay, WorkflowTab, MessagesTab, CommandsTab, MAX_OVERLAY_HEIGHT_RATIO, type EditorTab } from "./src/workflow-editor.js";
 
 const OVERLAY_OPTIONS = {
   overlay: true,
@@ -13,7 +13,7 @@ const OVERLAY_OPTIONS = {
     anchor: "center" as const,
     width: "90%" as const,
     minWidth: 60,
-    maxHeight: "90%" as const,
+    maxHeight: `${MAX_OVERLAY_HEIGHT_RATIO * 100}%` as const,
   },
 };
 
@@ -394,7 +394,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       notifyConfigErrors(ctx, getWorkflowConfig().errors);
-      await ctx.ui.custom<void>((_tui, theme, _keybindings, done) => {
+      await ctx.ui.custom<void>((tui, theme, _keybindings, done) => {
         const tabs: EditorTab[] = [
           new WorkflowTab(theme, (text, kind) => ctx.ui.notify(text, kind)),
           new MessagesTab(theme, (text, kind) => ctx.ui.notify(text, kind)),
@@ -404,8 +404,8 @@ export default function (pi: ExtensionAPI) {
           title: "Workflow Editor",
           tabs,
           theme,
+          tui,
           done,
-          onNotify: (text, kind) => ctx.ui.notify(text, kind),
         });
       }, OVERLAY_OPTIONS);
     },

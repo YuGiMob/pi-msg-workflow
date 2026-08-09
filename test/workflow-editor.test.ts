@@ -866,7 +866,7 @@ describe("CommandsTab", () => {
 describe("WorkflowEditorOverlay", () => {
   let theme: ReturnType<typeof createTheme>;
   let done: any;
-  let onNotify: any;
+  let showOverlay: any;
   let workflowTab: WorkflowTab;
   let messagesTab: MessagesTab;
   let commandsTab: CommandsTab;
@@ -875,7 +875,7 @@ describe("WorkflowEditorOverlay", () => {
   beforeEach(() => {
     theme = createTheme();
     done = vi.fn();
-    onNotify = vi.fn();
+    showOverlay = vi.fn(() => ({ hide: vi.fn() }));
     setupFs();
     workflowTab = new WorkflowTab(theme as any, vi.fn() as any);
     messagesTab = new MessagesTab(theme as any, vi.fn() as any);
@@ -884,8 +884,8 @@ describe("WorkflowEditorOverlay", () => {
       title: "Workflow Editor",
       tabs: [workflowTab, messagesTab, commandsTab],
       theme: theme as any,
+      tui: { terminal: { rows: 24 }, showOverlay } as any,
       done,
-      onNotify,
     });
   });
 
@@ -900,6 +900,17 @@ describe("WorkflowEditorOverlay", () => {
     expect(lines[2]).toContain("[Workflow]");
     expect(lines[2]).toContain("[Messages]");
     expect(lines[2]).toContain("[Commands]");
+  });
+
+  it("wraps the footer hints across multiple lines instead of truncating", () => {
+    const lines = overlay.render(80);
+    const footer = lines.join("\n");
+    expect(footer).toContain("u undo");
+    expect(footer).toContain("q close");
+    expect(footer).not.toContain("…");
+    for (const line of lines) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(80);
+    }
   });
 
   it("switches tabs with tab and shift+tab", () => {
@@ -918,7 +929,7 @@ describe("WorkflowEditorOverlay", () => {
   it("closes cleanly when nothing is dirty", () => {
     overlay.handleInput("q");
     expect(done).toHaveBeenCalled();
-    expect(onNotify).not.toHaveBeenCalled();
+    expect(showOverlay).not.toHaveBeenCalled();
   });
 
   it("exits with q sent as a Kitty CSI-u sequence", () => {
@@ -926,15 +937,54 @@ describe("WorkflowEditorOverlay", () => {
     expect(done).toHaveBeenCalled();
   });
 
-  it("requires a second q to close with unsaved changes", () => {
+  it("shows a confirm popup in front when closing with unsaved changes", () => {
     workflowTab.handleInput("e");
     workflowTab.handleInput("9");
     workflowTab.handleInput("\r");
     overlay.handleInput("q");
-    expect(onNotify).toHaveBeenCalledWith("Unsaved changes - press q again to close", "warning");
+    expect(showOverlay).toHaveBeenCalledTimes(1);
     expect(done).not.toHaveBeenCalled();
+    const popup = showOverlay.mock.calls[0]![0];
+    const lines = popup.render(50);
+    expect(lines.join("\n")).toContain("Unsaved changes - press q again to close");
+    expect(showOverlay.mock.calls[0]![1]).toMatchObject({ anchor: "center" });
+  });
+
+  it("closes the editor when q is pressed on the confirm popup", () => {
+    workflowTab.handleInput("e");
+    workflowTab.handleInput("9");
+    workflowTab.handleInput("\r");
     overlay.handleInput("q");
+    const popup = showOverlay.mock.calls[0]![0];
+    popup.handleInput("q");
     expect(done).toHaveBeenCalled();
+    expect(showOverlay.mock.results[0]!.value.hide).toHaveBeenCalled();
+  });
+
+  it("dismisses the confirm popup on any other key", () => {
+    workflowTab.handleInput("e");
+    workflowTab.handleInput("9");
+    workflowTab.handleInput("\r");
+    overlay.handleInput("q");
+    const popup = showOverlay.mock.calls[0]![0];
+    popup.handleInput("j");
+    expect(done).not.toHaveBeenCalled();
+    expect(showOverlay.mock.results[0]!.value.hide).toHaveBeenCalled();
+  });
+
+  it("auto-dismisses the confirm popup after 5 seconds", () => {
+    vi.useFakeTimers();
+    try {
+      workflowTab.handleInput("e");
+      workflowTab.handleInput("9");
+      workflowTab.handleInput("\r");
+      overlay.handleInput("q");
+      vi.advanceTimersByTime(5000);
+      expect(showOverlay.mock.results[0]!.value.hide).toHaveBeenCalled();
+      expect(done).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("marks dirty tabs in the tab bar", () => {
