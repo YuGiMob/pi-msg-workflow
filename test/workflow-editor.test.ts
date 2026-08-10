@@ -152,7 +152,7 @@ describe("WorkflowTab", () => {
     tab.handleInput("\r");
     expect(tab.draft.tree).toBe("1");
     expect(tab.dirty).toBe(false);
-    expect(tab.getAboveContentLine(80)).toContain("Index must be a number");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Index must be a number");
   });
 
   it("edits a start msg index", () => {
@@ -214,7 +214,7 @@ describe("WorkflowTab", () => {
     type(tab, "bogus");
     tab.handleInput("\r");
     expect(tab.draft.start).toHaveLength(5);
-    expect(tab.getAboveContentLine(80)).toContain("Expected: msg <number> or cmd <number>");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Expected: msg <number> or cmd <number>");
   });
 
   it("edits a start cmd index", () => {
@@ -287,7 +287,7 @@ describe("WorkflowTab", () => {
     for (let i = 0; i < 11; i++) tab.handleInput("j");
     tab.handleInput("t");
     expect(tab.draft.finally[0]).toEqual({ msg: "8" });
-    expect(tab.getAboveContentLine(80)).toContain("if-changes applies to loop msg steps");
+    expect(tab.getAboveContentLine(80)[0]).toContain("if-changes applies to loop msg steps");
   });
 
   it("saves finally steps to workflow.json", () => {
@@ -313,13 +313,13 @@ describe("WorkflowTab", () => {
     type(tab, "bogus");
     tab.handleInput("\r");
     expect(tab.draft.loop).toHaveLength(5);
-    expect(tab.getAboveContentLine(80)).toContain("Expected: msg <number> or cmd <number>");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Expected: msg <number> or cmd <number>");
   });
 
   it("cannot add a step on the tree row", () => {
     for (let i = 0; i < 5; i++) tab.handleInput("j");
     tab.handleInput("a");
-    expect(tab.getAboveContentLine(80)).toContain("tree step is fixed");
+    expect(tab.getAboveContentLine(80)[0]).toContain("tree step is fixed");
     expect(tab.draft.loop).toHaveLength(5);
   });
 
@@ -334,7 +334,7 @@ describe("WorkflowTab", () => {
     for (let i = 0; i < 5; i++) tab.handleInput("j");
     tab.handleInput("x");
     expect(tab.draft.tree).toBe("1");
-    expect(tab.getAboveContentLine(80)).toContain("tree step is fixed");
+    expect(tab.getAboveContentLine(80)[0]).toContain("tree step is fixed");
   });
 
   it("moves a start row down", () => {
@@ -353,7 +353,7 @@ describe("WorkflowTab", () => {
     for (let i = 0; i < 5; i++) tab.handleInput("j");
     tab.handleInput("J");
     expect(tab.draft.loop[0]).toEqual({ cmd: "1" });
-    expect(tab.getAboveContentLine(80)).toContain("tree step is fixed");
+    expect(tab.getAboveContentLine(80)[0]).toContain("tree step is fixed");
   });
 
   it("toggles if-changes on a msg step", () => {
@@ -368,7 +368,7 @@ describe("WorkflowTab", () => {
     for (let i = 0; i < 6; i++) tab.handleInput("j");
     tab.handleInput("t");
     expect(tab.draft.loop[0]).toEqual({ cmd: "1" });
-    expect(tab.getAboveContentLine(80)).toContain("if-changes applies to loop msg steps");
+    expect(tab.getAboveContentLine(80)[0]).toContain("if-changes applies to loop msg steps");
   });
 
   it("adjusts and clamps rounds", () => {
@@ -405,7 +405,7 @@ describe("WorkflowTab", () => {
     tab.handleInput("\r");
     tab.save();
     expect(writeFileSync).not.toHaveBeenCalled();
-    expect(tab.getAboveContentLine(80)).toContain("Missing messages: 99 - add and save them in the Messages tab first");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Missing messages: 99 - add and save them in the Messages tab first");
     expect(tab.dirty).toBe(true);
   });
 
@@ -416,7 +416,7 @@ describe("WorkflowTab", () => {
     tab.handleInput("\r");
     tab.save();
     expect(writeFileSync).not.toHaveBeenCalled();
-    expect(tab.getAboveContentLine(80)).toContain("Missing commands: 9 - add and save them in the Commands tab first");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Missing commands: 9 - add and save them in the Commands tab first");
     expect(tab.dirty).toBe(true);
   });
 
@@ -425,7 +425,7 @@ describe("WorkflowTab", () => {
       throw new Error("disk full");
     });
     tab.save();
-    expect(tab.getAboveContentLine(80)).toContain("Could not save workflow.json");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Could not save workflow.json");
   });
 
   it("cancels input mode with escape", () => {
@@ -480,7 +480,7 @@ describe("WorkflowTab", () => {
   });
   it("flashes when there is nothing to undo", () => {
     tab.handleInput("u");
-    expect(tab.getAboveContentLine(80)).toContain("Nothing to undo");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Nothing to undo");
   });
   it("does not consume an undo slot when a move is refused", () => {
     tab.handleInput("J");
@@ -592,7 +592,7 @@ describe("MessagesTab", () => {
     type(tab, "ab");
     tab.handleInput("\r");
     expect(tab.draft["1"]).toBe(MSG1);
-    expect(tab.getAboveContentLine(80)).toContain("at least 5 characters");
+    expect(tab.getAboveContentLine(80)[0]).toContain("at least 5 characters");
   });
 
   it("adds a message with the next free index", () => {
@@ -640,8 +640,8 @@ describe("MessagesTab", () => {
     tab.handleInput("x");
     tab.save();
     expect(writeFileSync).not.toHaveBeenCalled();
-    expect(tab.getAboveContentLine(80)).toContain("Messages still used by the workflow: 1 - remove and save them in the Workflow");
-    expect(tab.getAboveContentLine(80)).not.toContain("tab first");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Messages still used by the workflow: 1 - remove and save them in the Workflow");
+    expect(tab.getAboveContentLine(80)[0]).not.toContain("tab first");
     expect(tab.dirty).toBe(true);
   });
 
@@ -650,7 +650,7 @@ describe("MessagesTab", () => {
       throw new Error("disk full");
     });
     tab.save();
-    expect(tab.getAboveContentLine(80)).toContain("Could not save messages.json");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Could not save messages.json");
   });
 
   it("pastes multi-character content into the input", () => {
@@ -668,33 +668,37 @@ describe("MessagesTab", () => {
     expect(tab.draft["1"]).toBe("line one line two");
   });
 
-  it("shows the end of a long pasted input with the cursor", () => {
+  it("wraps a long pasted input onto extra lines so all content stays visible", () => {
     tab.handleInput("a");
-    tab.handleInput(`\x1b[200~${"x".repeat(200)}\x1b[201~`);
-    const line = tab.getAboveContentLine(80);
-    expect(line!.startsWith("…")).toBe(true);
-    expect(line!.endsWith("▏")).toBe(true);
-    expect(line!.slice(-30)).toBe("x".repeat(29) + "▏");
-    expect(visibleWidth(line!)).toBeLessThanOrEqual(80);
+    const pasted = "x".repeat(200);
+    tab.handleInput(`\x1b[200~${pasted}\x1b[201~`);
+    const lines = tab.getAboveContentLine(80);
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines.join("")).toContain(pasted);
+    expect(lines[lines.length - 1]!.endsWith("▏")).toBe(true);
+    expect(lines.join("")).not.toContain("…");
+    for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(80);
   });
 
-  it("shows the cursor region when the cursor sits in the middle of a long input", () => {
+  it("wraps a long input with the cursor in the middle and shows it all", () => {
     tab.handleInput("a");
     tab.handleInput(`\x1b[200~${"x".repeat(100)}${"y".repeat(100)}\x1b[201~`);
     tab.handleInput("\x1b[H");
-    const line = tab.getAboveContentLine(80);
-    expect(line!.startsWith("…")).toBe(true);
-    expect(line!.endsWith("…")).toBe(true);
-    expect(line).toContain("▏");
-    expect(visibleWidth(line!)).toBeLessThanOrEqual(80);
+    const lines = tab.getAboveContentLine(80);
+    const joined = lines.join("");
+    expect(joined).toContain("▏");
+    expect(joined).toContain("x".repeat(100) + "y".repeat(100));
+    expect(joined).not.toContain("…");
+    for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(80);
   });
 
-  it("keeps a short input line untruncated", () => {
+  it("keeps a short input line on a single line", () => {
     tab.handleInput("a");
     tab.handleInput("\x1b[200~short content\x1b[201~");
-    const line = tab.getAboveContentLine(80);
-    expect(line).toContain("short content▏");
-    expect(line).not.toContain("…");
+    const lines = tab.getAboveContentLine(80);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("short content▏");
+    expect(lines[0]).not.toContain("…");
   });
 
   it("inserts at the cursor position with arrow keys", () => {
@@ -721,7 +725,7 @@ describe("MessagesTab", () => {
     type(tab, "abcdefg");
     tab.handleInput("\x1b[H");
     tab.handleInput("\x1b[3~");
-    expect(tab.getAboveContentLine(80)).toContain("▏bcdefg");
+    expect(tab.getAboveContentLine(80)[0]).toContain("▏bcdefg");
     tab.handleInput("\x1b[F");
     tab.handleInput("\x7f");
     tab.handleInput("\r");
@@ -731,7 +735,7 @@ describe("MessagesTab", () => {
     tab.handleInput("e");
     type(tab, "ab");
     tab.handleInput("\x1b[D");
-    expect(tab.getAboveContentLine(80)).toContain("a▏b");
+    expect(tab.getAboveContentLine(80)[0]).toContain("a▏b");
   });
   it("undoes a deleted message", () => {
     tab.handleInput("x");
@@ -849,7 +853,7 @@ describe("CommandsTab", () => {
     type(tab, "ab");
     tab.handleInput("\r");
     expect(tab.draft["1"]).toBe(COMMANDS["1"]);
-    expect(tab.getAboveContentLine(80)).toContain("at least 5 characters");
+    expect(tab.getAboveContentLine(80)[0]).toContain("at least 5 characters");
   });
 
   it("adds a command with the next free index", () => {
@@ -889,8 +893,8 @@ describe("CommandsTab", () => {
     tab.handleInput("x");
     tab.save();
     expect(writeFileSync).not.toHaveBeenCalled();
-    expect(tab.getAboveContentLine(80)).toContain("Commands still used by the workflow: 1 - remove and save them in the Workflow");
-    expect(tab.getAboveContentLine(80)).not.toContain("tab first");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Commands still used by the workflow: 1 - remove and save them in the Workflow");
+    expect(tab.getAboveContentLine(80)[0]).not.toContain("tab first");
     expect(tab.dirty).toBe(true);
   });
 });

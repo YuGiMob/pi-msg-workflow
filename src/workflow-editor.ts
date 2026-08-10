@@ -10,7 +10,7 @@ export interface EditorTab {
   dirty: boolean;
   readonly footerHints: string;
   handleInput(data: string): boolean;
-  getAboveContentLine(innerWidth: number): string | null;
+  getAboveContentLine(innerWidth: number): string[];
   render(innerWidth: number, height: number): string[];
   save(): void;
 }
@@ -49,39 +49,22 @@ function takePrefix(text: string, width: number): string {
   return result;
 }
 
-function takeSuffix(text: string, width: number): string {
-  const chars = [...text];
-  let result = "";
+function wrapCells(text: string, width: number): string[] {
+  const lines: string[] = [];
+  let current = "";
   let used = 0;
-  for (let i = chars.length - 1; i >= 0; i--) {
-    const w = visibleWidth(chars[i]!);
-    if (used + w > width) break;
-    result = chars[i]! + result;
+  for (const ch of text) {
+    const w = visibleWidth(ch);
+    if (used + w > width && current !== "") {
+      lines.push(current);
+      current = "";
+      used = 0;
+    }
+    current += ch;
     used += w;
   }
-  return result;
-}
-
-function fitInputLine(prompt: string, before: string, after: string, width: number): string {
-  const beforeSide = ` ${prompt}${before}`;
-  const cursorMark = "▏";
-  const beforeWidth = visibleWidth(beforeSide);
-  const afterWidth = visibleWidth(after);
-  if (beforeWidth + 1 + afterWidth <= width) return `${beforeSide}${cursorMark}${after}`;
-  let afterShown = after;
-  let afterEllipsis = false;
-  if (afterWidth > width - 3) {
-    afterShown = takePrefix(after, Math.max(0, width - 4));
-    afterEllipsis = true;
-  }
-  const beforeBudget = width - 1 - visibleWidth(afterShown) - (afterEllipsis ? 1 : 0);
-  let beforeShown = beforeSide;
-  let beforeEllipsis = false;
-  if (beforeWidth > beforeBudget) {
-    beforeShown = takeSuffix(beforeSide, Math.max(0, beforeBudget - 1));
-    beforeEllipsis = true;
-  }
-  return `${beforeEllipsis ? "…" : ""}${beforeShown}${cursorMark}${afterShown}${afterEllipsis ? "…" : ""}`;
+  if (current !== "") lines.push(current);
+  return lines;
 }
 
 function wrapText(text: string, width: number): string[] {
@@ -100,20 +83,7 @@ function wrapText(text: string, width: number): string[] {
       current = "";
     }
     if (visibleWidth(word) > width) {
-      let rest = word;
-      while (rest !== "") {
-        let cut = 0;
-        let used = 0;
-        for (const ch of rest) {
-          const w = visibleWidth(ch);
-          if (used + w > width) break;
-          used += w;
-          cut++;
-        }
-        if (cut === 0) cut = 1;
-        lines.push(rest.slice(0, cut));
-        rest = rest.slice(cut);
-      }
+      lines.push(...wrapCells(word, width));
     } else {
       current = word;
     }
@@ -239,10 +209,10 @@ abstract class BaseEditorTab implements EditorTab {
     return true;
   }
 
-  getAboveContentLine(innerWidth: number): string | null {
-    if (this.input) return fitInputLine(this.input.prompt, this.input.buffer.slice(0, this.input.cursor), this.input.buffer.slice(this.input.cursor), innerWidth);
-    if (this.flash) return truncate(` ${this.flash}`, innerWidth);
-    return null;
+  getAboveContentLine(innerWidth: number): string[] {
+    if (this.input) return wrapCells(` ${this.input.prompt}${this.input.buffer.slice(0, this.input.cursor)}▏${this.input.buffer.slice(this.input.cursor)}`, innerWidth);
+    if (this.flash) return [truncate(` ${this.flash}`, innerWidth)];
+    return [];
   }
 
   abstract handleInput(data: string): boolean;
@@ -974,8 +944,9 @@ export class WorkflowEditorOverlay {
     const innerW = width - 2;
     const hintParts = [this.opts.tabs.length > 1 ? "Tab" : "", this.active.footerHints, "q close"].filter(Boolean);
     const hintLines = wrapHint(` ${hintParts.join(" · ")}`, innerW);
+    const aboveLines = this.active.getAboveContentLine(innerW);
     const maxHeight = Math.floor(this.opts.tui.terminal.rows * MAX_OVERLAY_HEIGHT_RATIO);
-    const chromeRows = CHROME_ROWS + hintLines.length - 1;
+    const chromeRows = CHROME_ROWS + hintLines.length - 1 + Math.max(0, aboveLines.length - 1);
     const contentHeight = Math.max(1, Math.min(CONTENT_HEIGHT, maxHeight - chromeRows));
     const lines: string[] = [];
     const pad = (text: string) => text + " ".repeat(Math.max(0, innerW - visibleWidth(text)));
@@ -996,8 +967,11 @@ export class WorkflowEditorOverlay {
     }
     lines.push(row(tabBar));
 
-    const aboveLine = this.active.getAboveContentLine(innerW);
-    lines.push(aboveLine !== null ? row(aboveLine) : borderSep);
+    if (aboveLines.length > 0) {
+      for (const aboveLine of aboveLines) lines.push(row(aboveLine));
+    } else {
+      lines.push(borderSep);
+    }
 
     const contentLines = this.active.render(innerW, contentHeight);
     for (let i = 0; i < contentHeight; i++) {

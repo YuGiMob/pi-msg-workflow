@@ -127,7 +127,7 @@ Invalid config values are reported with a `[pi-msg-workflow]` warning and fall b
 | `s` | save the active tab |
 | `q` / `Esc` | close (asks for confirmation when there are unsaved changes) |
 
-While editing content, `←` / `→` move the cursor, `Home` / `End` jump to the start / end, `Delete` removes the character under the cursor, and `Backspace` removes the character before it.
+While editing content, `←` / `→` move the cursor, `Home` / `End` jump to the start / end, `Delete` removes the character under the cursor, and `Backspace` removes the character before it. Input longer than the window wraps onto additional lines, so the full content stays visible while you type or paste.
 
 Saving the Workflow tab refuses indices that reference missing messages or commands, so add and save those in the Messages/Commands tabs first. Saving the Messages and Commands tabs refuses to delete entries still referenced by the workflow, so drop and save those references in the Workflow tab first. The tree step is fixed as the first loop step — only its anchor index is editable.
 
