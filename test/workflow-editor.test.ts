@@ -640,7 +640,8 @@ describe("MessagesTab", () => {
     tab.handleInput("x");
     tab.save();
     expect(writeFileSync).not.toHaveBeenCalled();
-    expect(tab.getAboveContentLine(80)).toContain("Messages still used by the workflow: 1 - remove and save them in the Workflow tab first");
+    expect(tab.getAboveContentLine(80)).toContain("Messages still used by the workflow: 1 - remove and save them in the Workflow");
+    expect(tab.getAboveContentLine(80)).not.toContain("tab first");
     expect(tab.dirty).toBe(true);
   });
 
@@ -666,6 +667,36 @@ describe("MessagesTab", () => {
     tab.handleInput("\r");
     expect(tab.draft["1"]).toBe("line one line two");
   });
+
+  it("shows the end of a long pasted input with the cursor", () => {
+    tab.handleInput("a");
+    tab.handleInput(`\x1b[200~${"x".repeat(200)}\x1b[201~`);
+    const line = tab.getAboveContentLine(80);
+    expect(line!.startsWith("…")).toBe(true);
+    expect(line!.endsWith("▏")).toBe(true);
+    expect(line!.slice(-30)).toBe("x".repeat(29) + "▏");
+    expect(visibleWidth(line!)).toBeLessThanOrEqual(80);
+  });
+
+  it("shows the cursor region when the cursor sits in the middle of a long input", () => {
+    tab.handleInput("a");
+    tab.handleInput(`\x1b[200~${"x".repeat(100)}${"y".repeat(100)}\x1b[201~`);
+    tab.handleInput("\x1b[H");
+    const line = tab.getAboveContentLine(80);
+    expect(line!.startsWith("…")).toBe(true);
+    expect(line!.endsWith("…")).toBe(true);
+    expect(line).toContain("▏");
+    expect(visibleWidth(line!)).toBeLessThanOrEqual(80);
+  });
+
+  it("keeps a short input line untruncated", () => {
+    tab.handleInput("a");
+    tab.handleInput("\x1b[200~short content\x1b[201~");
+    const line = tab.getAboveContentLine(80);
+    expect(line).toContain("short content▏");
+    expect(line).not.toContain("…");
+  });
+
   it("inserts at the cursor position with arrow keys", () => {
     tab.handleInput("e");
     type(tab, "abcde");
@@ -858,7 +889,8 @@ describe("CommandsTab", () => {
     tab.handleInput("x");
     tab.save();
     expect(writeFileSync).not.toHaveBeenCalled();
-    expect(tab.getAboveContentLine(80)).toContain("Commands still used by the workflow: 1 - remove and save them in the Workflow tab first");
+    expect(tab.getAboveContentLine(80)).toContain("Commands still used by the workflow: 1 - remove and save them in the Workflow");
+    expect(tab.getAboveContentLine(80)).not.toContain("tab first");
     expect(tab.dirty).toBe(true);
   });
 });

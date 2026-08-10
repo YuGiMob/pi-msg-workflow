@@ -34,15 +34,54 @@ const PASTE_END = "\x1b[201~";
 
 function truncate(text: string, width: number): string {
   if (visibleWidth(text) <= width) return text;
+  return `${takePrefix(text, width - 1)}…`;
+}
+
+function takePrefix(text: string, width: number): string {
   let result = "";
   let used = 0;
   for (const ch of text) {
     const w = visibleWidth(ch);
-    if (used + w > width - 1) break;
+    if (used + w > width) break;
     result += ch;
     used += w;
   }
-  return `${result}…`;
+  return result;
+}
+
+function takeSuffix(text: string, width: number): string {
+  const chars = [...text];
+  let result = "";
+  let used = 0;
+  for (let i = chars.length - 1; i >= 0; i--) {
+    const w = visibleWidth(chars[i]!);
+    if (used + w > width) break;
+    result = chars[i]! + result;
+    used += w;
+  }
+  return result;
+}
+
+function fitInputLine(prompt: string, before: string, after: string, width: number): string {
+  const beforeSide = ` ${prompt}${before}`;
+  const cursorMark = "▏";
+  const beforeWidth = visibleWidth(beforeSide);
+  const afterWidth = visibleWidth(after);
+  if (beforeWidth + 1 + afterWidth <= width) return `${beforeSide}${cursorMark}${after}`;
+  let afterShown = after;
+  let afterEllipsis = false;
+  if (afterWidth > width - 3) {
+    afterShown = takePrefix(after, Math.max(0, width - 4));
+    afterEllipsis = true;
+  }
+  const beforeBudget = width - 1 - visibleWidth(afterShown) - (afterEllipsis ? 1 : 0);
+  let beforeShown = beforeSide;
+  let beforeEllipsis = false;
+  if (beforeWidth > beforeBudget) {
+    beforeShown = takeSuffix(beforeSide, Math.max(0, beforeBudget - 1));
+    beforeEllipsis = true;
+  }
+  return `${beforeEllipsis ? "…" : ""}${beforeShown}${cursorMark}${afterShown}${afterEllipsis ? "…" : ""}`;
 }
 
 function wrapText(text: string, width: number): string[] {
@@ -200,9 +239,9 @@ abstract class BaseEditorTab implements EditorTab {
     return true;
   }
 
-  getAboveContentLine(_innerWidth: number): string | null {
-    if (this.input) return ` ${this.input.prompt}${this.input.buffer.slice(0, this.input.cursor)}▏${this.input.buffer.slice(this.input.cursor)}`;
-    if (this.flash) return ` ${this.flash}`;
+  getAboveContentLine(innerWidth: number): string | null {
+    if (this.input) return fitInputLine(this.input.prompt, this.input.buffer.slice(0, this.input.cursor), this.input.buffer.slice(this.input.cursor), innerWidth);
+    if (this.flash) return truncate(` ${this.flash}`, innerWidth);
     return null;
   }
 
@@ -958,7 +997,7 @@ export class WorkflowEditorOverlay {
     lines.push(row(tabBar));
 
     const aboveLine = this.active.getAboveContentLine(innerW);
-    lines.push(aboveLine !== null ? row(truncate(` ${aboveLine}`, innerW)) : borderSep);
+    lines.push(aboveLine !== null ? row(aboveLine) : borderSep);
 
     const contentLines = this.active.render(innerW, contentHeight);
     for (let i = 0; i < contentHeight; i++) {
