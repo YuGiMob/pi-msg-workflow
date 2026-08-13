@@ -55,7 +55,7 @@ vi.mock("@earendil-works/pi-tui", () => ({
 }));
 
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { WorkflowTab, MessagesTab, CommandsTab, WorkflowEditorOverlay } from "../src/workflow-editor.js";
+import { WorkflowTab, MessagesTab, CommandsTab, WorkflowEditorOverlay, deepEqual } from "../src/workflow-editor.js";
 
 const MSG1 = "Read the entirety of the codebase";
 const MSG2 = "inform me about all of the improvements";
@@ -120,6 +120,23 @@ function setupFs() {
   });
 }
 
+describe("deepEqual", () => {
+  it("distinguishes arrays from objects with the same keys", () => {
+    expect(deepEqual([], {})).toBe(false);
+    expect(deepEqual(["1"], { "0": "1" })).toBe(false);
+  });
+
+  it("compares arrays by position and value", () => {
+    expect(deepEqual([1, 2], [1, 2])).toBe(true);
+    expect(deepEqual([1, 2], [2, 1])).toBe(false);
+  });
+
+  it("compares nested arrays", () => {
+    expect(deepEqual({ a: [1] }, { a: [1] })).toBe(true);
+    expect(deepEqual({ a: [1] }, { a: { "0": 1 } })).toBe(false);
+  });
+});
+
 describe("WorkflowTab", () => {
   let theme: ReturnType<typeof createTheme>;
   let notify: any;
@@ -173,6 +190,32 @@ describe("WorkflowTab", () => {
     expect(tab.draft.tree).toBe("1");
     expect(tab.draft.loop).toEqual([{ msg: "6" }, { tree: "2" }]);
     expect(tab.getAboveContentLine(80)[0]).toContain("moved to the start of the loop");
+  });
+
+  it("renders embedded tree steps in the loop", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 2, start: [], loop: [{ tree: "1" }, { tree: "2" }, { msg: "6" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any, notify);
+    const lines = tab.render(78, 12).join("\n");
+    expect(lines).toContain("tree → 2");
+  });
+
+  it("edits an embedded tree step index", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 2, start: [], loop: [{ tree: "1" }, { tree: "2" }, { msg: "6" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any, notify);
+    tab.handleInput("j");
+    tab.handleInput("e");
+    tab.handleInput("3");
+    tab.handleInput("\r");
+    expect(tab.draft.loop[0]).toEqual({ tree: "3" });
+    expect(tab.dirty).toBe(true);
   });
 
   it("refuses to load a workflow without a tree step", () => {
@@ -787,6 +830,18 @@ describe("MessagesTab", () => {
     expect(tab.getAboveContentLine(80)[0]).toContain("at least 5 characters");
   });
 
+  it("keeps the input open when the commit is rejected", () => {
+    tab.handleInput("e");
+    type(tab, "ab");
+    tab.handleInput("\r");
+    expect(tab.draft["1"]).toBe(MSG1);
+    expect(tab.getAboveContentLine(80)[0]).toContain("at least 5 characters");
+    expect(tab.getAboveContentLine(80)[1]).toContain("content for message 1");
+    type(tab, "cde");
+    tab.handleInput("\r");
+    expect(tab.draft["1"]).toBe("abcde");
+  });
+
   it("adds a message with the next free index", () => {
     tab.handleInput("a");
     type(tab, "Brand new message");
@@ -1239,6 +1294,17 @@ describe("WorkflowEditorOverlay", () => {
     overlay.handleInput("q");
     const popup = showOverlay.mock.calls[0]![0];
     popup.handleInput("j");
+    expect(done).not.toHaveBeenCalled();
+    expect(showOverlay.mock.results[0]!.value.hide).toHaveBeenCalled();
+  });
+
+  it("dismisses the confirm popup on escape instead of closing", () => {
+    workflowTab.handleInput("e");
+    workflowTab.handleInput("9");
+    workflowTab.handleInput("\r");
+    overlay.handleInput("q");
+    const popup = showOverlay.mock.calls[0]![0];
+    popup.handleInput("\x1b");
     expect(done).not.toHaveBeenCalled();
     expect(showOverlay.mock.results[0]!.value.hide).toHaveBeenCalled();
   });

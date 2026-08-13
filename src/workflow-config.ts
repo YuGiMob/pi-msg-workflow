@@ -60,7 +60,7 @@ function stepAction(value: unknown): { action: string; content: unknown; step: R
   return { action, content: step[action], step };
 }
 
-function isNumericString(value: unknown): value is string {
+export function isNumericString(value: unknown): value is string {
   return typeof value === "string" && /^\d+$/.test(value);
 }
 
@@ -152,7 +152,7 @@ function parseWorkflows(raw: unknown, errors: string[]): Record<string, Workflow
   }
   const workflows: Record<string, WorkflowConfig> = {};
   for (const [key, value] of Object.entries(input)) {
-    if (!/^\d+$/.test(key)) {
+    if (!isNumericString(key)) {
       errors.push(`Invalid workflow key "${key}" - skipped.`);
       continue;
     }
@@ -179,11 +179,11 @@ export function getWorkflows(): { workflows: Record<string, WorkflowConfig>; err
   return { workflows: parseWorkflows(raw, errors), errors, fallback: false };
 }
 
-export function getWorkflowConfig(index = "1"): { config: WorkflowConfig; errors: string[]; exists: boolean } {
+export function getWorkflowConfig(index = "1"): { config: WorkflowConfig; errors: string[]; exists: boolean; fallback: boolean } {
   const { workflows, errors, fallback } = getWorkflows();
   const config = workflows[index];
-  if (config !== undefined) return { config, errors, exists: true };
-  return { config: defaultConfig(), errors, exists: fallback };
+  if (config !== undefined) return { config, errors, exists: true, fallback };
+  return { config: defaultConfig(), errors, exists: fallback && index === "1", fallback };
 }
 
 export function setWorkflowConfig(index: string, config: WorkflowConfig): void {
@@ -195,7 +195,7 @@ export function setWorkflowConfig(index: string, config: WorkflowConfig): void {
       workflows["1"] = raw;
     } else {
       for (const [key, value] of Object.entries(raw)) {
-        if (/^\d+$/.test(key) && value !== null && typeof value === "object" && !Array.isArray(value)) {
+        if (isNumericString(key) && value !== null && typeof value === "object" && !Array.isArray(value)) {
           workflows[key] = value;
         }
       }

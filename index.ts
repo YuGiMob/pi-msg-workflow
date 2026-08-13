@@ -1,10 +1,10 @@
-import type { ExtensionAPI, ExtensionCommandContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { ExecResult, ExtensionAPI, ExtensionCommandContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { getMessages, setMessages } from "./src/messages.js";
 import { getCommands, setCommands } from "./src/commands.js";
 import { MAX_ROUNDS } from "./src/constants.js";
 import { runCommand, commandFailureMessage } from "./src/command-runner.js";
-import { getWorkflowConfig, missingReferences, type StartStep, type LoopStep } from "./src/workflow-config.js";
+import { getWorkflowConfig, missingReferences, isNumericString, type StartStep, type LoopStep } from "./src/workflow-config.js";
 import { resetUserData } from "./src/user-data.js";
 import { countLeadingPhaseMatches, findAnchorAfterMessage, countUserTextMatches } from "./src/session-helpers.js";
 import { WorkflowEditorOverlay, WorkflowTab, MessagesTab, CommandsTab, MAX_OVERLAY_HEIGHT_RATIO, type EditorTab } from "./src/workflow-editor.js";
@@ -130,7 +130,7 @@ function registerChangeCommand(
         return;
       }
       const num = match[1];
-      const content = match[2] ?? match[3] ?? match[4];
+      const content = (match[2] ?? match[3] ?? match[4]).trim();
       if (content.length < 5) {
         ctx.ui.notify(`${noun} must be at least 5 characters`, "warning");
         return;
@@ -183,14 +183,20 @@ function registerShowCommand(
 
 function parseRounds(args: string, fallback: number): number {
   const trimmed = args.trim();
-  if (!/^\d+$/.test(trimmed)) return fallback;
+  if (!isNumericString(trimmed)) return fallback;
   const value = Number.parseInt(trimmed, 10);
   if (value < 1) return fallback;
   return Math.min(value, MAX_ROUNDS);
 }
 async function checkForChanges(pi: ExtensionAPI, ctx: ExtensionCommandContext, round: number, rounds: number): Promise<boolean | null> {
   ctx.ui.setWorkingMessage(`Round ${round}/${rounds}: checking for changes...`);
-  const statusResult = await pi.exec("git", ["status", "--porcelain"]);
+  let statusResult: ExecResult;
+  try {
+    statusResult = await pi.exec("git", ["status", "--porcelain"]);
+  } catch (err) {
+    ctx.ui.notify(`git status --porcelain failed: ${errorMessage(err)}`, "error");
+    return null;
+  }
   if (statusResult.code !== 0) {
     ctx.ui.notify(`git status --porcelain failed: ${statusResult.stderr}`, "error");
     return null;
@@ -302,7 +308,7 @@ async function sendAndWaitForTurn(
   return "failed";
 }
 
-type TreeNavigationStatus = "ok" | "missing" | "not-found" | "cancelled" | "fallback";
+type TreeNavigationStatus = "ok" | "missing" | "not-found" | "cancelled" | "failed" | "fallback";
 
 async function navigateToMessageAnchor(ctx: ExtensionCommandContext, index: string, requirePresence = false): Promise<TreeNavigationStatus> {
   const text = getMessages()[index];
@@ -311,7 +317,13 @@ async function navigateToMessageAnchor(ctx: ExtensionCommandContext, index: stri
   if (requirePresence && !present) return "not-found";
   const anchor = findAnchorAfterMessage(ctx.sessionManager.getBranch(), text);
   if (!anchor) return "not-found";
-  const navigation = await ctx.navigateTree(anchor.id, { summarize: false });
+  let navigation: { cancelled: boolean };
+  try {
+    navigation = await ctx.navigateTree(anchor.id, { summarize: false });
+  } catch (err) {
+    ctx.ui.notify(`Could not navigate: ${errorMessage(err)}`, "error");
+    return "failed";
+  }
   if (navigation.cancelled) return "cancelled";
   return present ? "ok" : "fallback";
 }
@@ -333,6 +345,9 @@ function notifyNavigationStatus(
   }
   if (status === "cancelled") {
     ctx.ui.notify(cancelledText, "warning");
+    return false;
+  }
+  if (status === "failed") {
     return false;
   }
   if (status === "fallback") {
@@ -429,11 +444,15 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("A workflow is already running - use /workflow-stop to cancel it", "warning");
         return;
       }
-      const numeric = tokens.filter((token) => /^\d+$/.test(token));
+      const numeric = tokens.filter(isNumericString);
       const index = numeric[0] ?? "1";
-      const { config, errors, exists } = getWorkflowConfig(index);
+      const { config, errors, exists, fallback } = getWorkflowConfig(index);
       if (!exists) {
-        ctx.ui.notify(`Workflow ${index} does not exist. Use /workflow-edit and press w to create it.`, "error");
+        if (fallback && errors.length > 0) {
+          notifyConfigErrors(ctx, errors);
+        } else {
+          ctx.ui.notify(`Workflow ${index} does not exist. Use /workflow-edit and press w to create it.`, "error");
+        }
         return;
       }
       notifyConfigErrors(ctx, errors);

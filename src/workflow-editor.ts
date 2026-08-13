@@ -3,7 +3,7 @@ import { Key, decodeKittyPrintable, matchesKey, visibleWidth, type OverlayHandle
 import { getMessages, setMessages } from "./messages.js";
 import { getCommands, setCommands } from "./commands.js";
 import { MAX_ROUNDS } from "./constants.js";
-import { getWorkflows, getWorkflowConfig, setWorkflowConfig, missingReferences, referencedIndices, referencedCommands, type LoopStep, type WorkflowConfig } from "./workflow-config.js";
+import { getWorkflows, getWorkflowConfig, setWorkflowConfig, missingReferences, referencedIndices, referencedCommands, isNumericString, type LoopStep, type WorkflowConfig } from "./workflow-config.js";
 import { compareNumericKeys } from "./json-file.js";
 import { errorMessage } from "./errors.js";
 
@@ -115,9 +115,10 @@ function wrapHint(text: string, width: number): string[] {
   return lines;
 }
 
-function deepEqual(a: unknown, b: unknown): boolean {
+export function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
   const aKeys = Object.keys(a).sort();
   const bKeys = Object.keys(b).sort();
   if (aKeys.length !== bKeys.length) return false;
@@ -194,8 +195,11 @@ abstract class BaseEditorTab implements EditorTab {
     }
     if (matchesKey(data, Key.enter)) {
       const error = this.input.commit(this.input.buffer);
-      if (error !== null) this.setFlash(error);
-      this.input = null;
+      if (error !== null) {
+        this.setFlash(error);
+      } else {
+        this.input = null;
+      }
       return true;
     }
     if (matchesKey(data, Key.backspace)) {
@@ -250,9 +254,10 @@ abstract class BaseEditorTab implements EditorTab {
   }
 
   getAboveContentLine(innerWidth: number): string[] {
-    if (this.input) return wrapCells(` ${this.input.prompt}${this.input.buffer.slice(0, this.input.cursor)}▏${this.input.buffer.slice(this.input.cursor)}`, innerWidth);
-    if (this.flash) return [truncate(` ${this.flash}`, innerWidth)];
-    return [];
+    const lines: string[] = [];
+    if (this.flash) lines.push(truncate(` ${this.flash}`, innerWidth));
+    if (this.input) lines.push(...wrapCells(` ${this.input.prompt}${this.input.buffer.slice(0, this.input.cursor)}▏${this.input.buffer.slice(this.input.cursor)}`, innerWidth));
+    return lines;
   }
 
   abstract handleInput(data: string): boolean;
@@ -335,7 +340,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     }
     this.startInput(`workflow number (current: ${this.index}): `, (value) => {
       const index = value.trim();
-      if (!/^\d+$/.test(index)) return "Workflow number must be a number.";
+      if (!isNumericString(index)) return "Workflow number must be a number.";
       const { exists } = getWorkflowConfig(index);
       const result = this.loadWorkflow(index);
       if (!result.ok) {
@@ -458,7 +463,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
   private editStepIndex(target: LoopStep[], position: number, action: "msg" | "cmd", current: string): void {
     const label = action === "msg" ? "message" : "command";
     this.commitInput(`${label} index for ${action} step (current: ${current}): `, (value) => {
-      return /^\d+$/.test(value) ? null : "Index must be a number.";
+      return isNumericString(value) ? null : "Index must be a number.";
     }, (value) => {
       const step = target[position]!;
       target[position] = action === "msg" ? { ...step, msg: value } : { ...step, cmd: value };
@@ -469,7 +474,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     if (kind === "tree") {
       const current = this.draft.tree;
       this.commitInput(`tree anchor message index (current: ${current}): `, (value) => {
-        return /^\d+$/.test(value) ? null : "Index must be a number.";
+        return isNumericString(value) ? null : "Index must be a number.";
       }, (value) => {
         this.draft.tree = value;
       });
@@ -481,6 +486,12 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       this.editStepIndex(target, position, "msg", step.msg);
     } else if (step.cmd !== undefined) {
       this.editStepIndex(target, position, "cmd", step.cmd);
+    } else if (step.tree !== undefined) {
+      this.commitInput(`tree anchor message index (current: ${step.tree}): `, (value) => {
+        return isNumericString(value) ? null : "Index must be a number.";
+      }, (value) => {
+        target[position] = { ...step, tree: value };
+      });
     }
   }
 
@@ -621,6 +632,8 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
           row(`msg ${step.msg}${suffix}: ${storePreview(messages, step.msg)}`, selected(i));
         } else if (step.cmd !== undefined) {
           row(`cmd ${step.cmd}${suffix}: ${storePreview(commands, step.cmd)}`, selected(i));
+        } else if (step.tree !== undefined) {
+          row(`tree → ${step.tree}: ${storePreview(messages, step.tree)}`, selected(i));
         }
       });
     };
@@ -867,7 +880,7 @@ class ConfirmClosePopup {
   ) {}
 
   handleInput(data: string): void {
-    if (matchesKey(data, Key.escape) || matchesKey(data, "q")) {
+    if (matchesKey(data, "q")) {
       this.onConfirm();
     } else {
       this.onDismiss();

@@ -427,6 +427,30 @@ describe("workflow extension", () => {
     expect(pi.sendUserMessage).not.toHaveBeenCalled();
   });
 
+  it("reports the read error when the file is unreadable", async () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return "not json";
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const ctx = createCtx(fullPhaseA());
+    await commands["workflow"].handler("9", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Could not read workflow.json"), "warning");
+    expect(pi.sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it("reports a missing workflow even when other workflows have config errors", async () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 99, start: [], loop: [{ tree: "1" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const ctx = createCtx(fullPhaseA());
+    await commands["workflow"].handler("9", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Workflow 9 does not exist"), "error");
+    expect(pi.sendUserMessage).not.toHaveBeenCalled();
+  });
+
   it("treats a legacy single-workflow file as workflow 1", async () => {
     holder.workflow = structuredClone(DEFAULT_WORKFLOW);
     const ctx = createCtx(fullPhaseA());
@@ -623,12 +647,33 @@ describe("workflow extension", () => {
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("git status --porcelain failed"), "error");
   });
 
+  it("aborts when git status throws", async () => {
+    pi.exec = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "status") throw new Error("boom");
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    const ctx = createCtx(fullPhaseA());
+    await commands["workflow"].handler("", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith("git status --porcelain failed: boom", "error");
+  });
+
   it("aborts when navigation is cancelled", async () => {
     const ctx = createCtx(fullPhaseA(), {
       navigateTree: vi.fn(async () => ({ cancelled: true })),
     });
     await commands["workflow"].handler("", ctx);
     expect(ctx.ui.notify).toHaveBeenCalledWith("Workflow cancelled", "warning");
+    expect(pi.sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it("aborts when navigation throws", async () => {
+    const ctx = createCtx(fullPhaseA(), {
+      navigateTree: vi.fn(async () => {
+        throw new Error("boom");
+      }),
+    });
+    await commands["workflow"].handler("", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Could not navigate: boom", "error");
     expect(pi.sendUserMessage).not.toHaveBeenCalled();
   });
 

@@ -134,6 +134,17 @@ describe("messages extension", () => {
       expect(ctx.ui.notify).toHaveBeenCalledWith("Message 3 updated", "info");
     });
 
+    it("trims surrounding whitespace from quoted content", async () => {
+      const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
+      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
+
+      await cmd.cmd.handler('3 "  New test message  "', ctx);
+
+      const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
+      expect(written["3"]).toBe("New test message");
+      expect(ctx.ui.notify).toHaveBeenCalledWith("Message 3 updated", "info");
+    });
+
     it("rejects content that starts with a quote", async () => {
       const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
       const ctx = { hasUI: true, ui: { notify: vi.fn() } };
