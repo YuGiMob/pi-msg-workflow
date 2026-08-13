@@ -129,7 +129,7 @@ Ordered steps repeated each round. The first step must be a `tree` step — the 
 | `{ "cmd": "1", "onlyIfChanges": true }` | Perform command 1 only when `git status --porcelain` shows changes. |
 
 `onlyIfChanges` runs `git status --porcelain` in the project directory, so it requires the project to be a git repository. A msg or cmd step with `onlyIfChanges` is skipped when there are no changes.
-Message indices refer to the numbered message store — `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store — `/cmd 1`, `/change-cmd 1 "git add ."`, and `{ "cmd": "1" }` all address the same command. The default message store is numbered `1`–`17`: `1`–`8` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix, summarize), `9`–`17` serve workflow 2.
+Message indices refer to the numbered message store — `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store — `/cmd 1`, `/change-cmd 1 "git add ."`, and `{ "cmd": "1" }` all address the same command. The default message store is numbered `1`–`9` and `12`–`17`: `1`–`8` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix, summarize), `9` and `12`–`17` serve workflow 2 (combined review, value check, implement, closer look, fix, validate, summarize).
 
 #### `finally`
 
@@ -141,13 +141,12 @@ Invalid config values are reported with a `[pi-msg-workflow]` warning and fall b
 
 ### Workflow 2: deduplication, simplification, bug reduction
 
-Workflow 2 is a focused review loop over duplicated logic, unnecessary complexity, and bug risks:
+Workflow 2 is a focused review loop over duplicated logic, unnecessary complexity, and bug risks. It shares the read-the-codebase step (message 1) with workflow 1 and runs the whole review in one message before the value check and implementation:
 
 | Step | Meaning |
 | --- | --- |
-| `{ "msg": "9" }` | Find duplicated logic — the same pattern repeated three or more times that should be extracted into shared helpers. |
-| `{ "msg": "10" }` | Find unnecessary complexity: over-engineering, dead code, redundant branches, logic that can be simplified without losing clarity. |
-| `{ "msg": "11" }` | Find bug risks: edge cases, missing error handling, off-by-one errors, race conditions, resource leaks. |
+| `{ "msg": "1" }` | Read the entirety of the codebase (shared with workflow 1; skipped when it already matches the leading user messages of the session). |
+| `{ "msg": "9" }` | Find duplicated logic (the same pattern repeated three or more times that should be extracted into shared helpers), unnecessary complexity (over-engineering, dead code, redundant branches), and bug risks (edge cases, missing error handling, off-by-one errors, race conditions, resource leaks) in one pass. |
 | `{ "msg": "12" }` | Value check: are the deduplication, simplification, and bug-reduction changes actually worth implementing? |
 | `{ "msg": "13" }` | Implement all of the changes worth implementing. |
 | `{ "msg": "14" }` | Take a closer look at all of the changes via `git diff --staged`. |
@@ -156,7 +155,7 @@ Workflow 2 is a focused review loop over duplicated logic, unnecessary complexit
 | `{ "cmd": "1", "onlyIfChanges": true }` | Stage the changes only when there are changes. |
 | `{ "msg": "17" }` | Summarize all of the changes since the last commit. |
 
-The tree step resets the context to the response of message 9, the first start message of this workflow.
+The tree step resets the context to the response of message 1, the shared read-the-codebase step of this workflow.
 ## The editor
 
 `/workflow-edit` opens an overlay with three tabs: **[Workflow]** (workflow number, rounds, start/loop/finally steps, tree anchor, add/delete/reorder, if-changes toggle, workflow switching), **[Messages]** and **[Commands]** (add, edit, delete store entries). Changes are saved per tab with `s`; closing with unsaved changes asks for confirmation.
