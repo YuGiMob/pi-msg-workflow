@@ -145,7 +145,7 @@ Workflow 2 is a focused review loop over duplicated logic, unnecessary complexit
 | Step | Meaning |
 | --- | --- |
 | `{ "msg": "1" }` | Read the entirety of the codebase (shared with workflow 1; skipped when it already matches the leading user messages of the session). |
-| `{ "msg": "9" }` | Find duplicated logic (the same pattern repeated three or more times that should be extracted into shared helpers), unnecessary complexity (over-engineering, dead code, redundant branches), and bug risks (edge cases, missing error handling, off-by-one errors, race conditions, resource leaks) in one pass. |
+| `{ "msg": "9" }` | Find duplicated logic (the same pattern repeated three or more times, or two substantial structurally identical blocks, that should be extracted into shared helpers), unnecessary complexity (over-engineering, dead code, redundant branches), and bug risks (edge cases, missing error handling, off-by-one errors, race conditions, resource leaks) in one pass. |
 | `{ "msg": "10" }` | Value check: are the deduplication, simplification, and bug-reduction changes actually worth implementing? |
 | `{ "msg": "11" }` | Implement all of the changes worth implementing. |
 | `{ "msg": "12" }` | Take a closer look at all of the changes via `git diff --staged`. |
