@@ -828,23 +828,25 @@ describe("workflow extension", () => {
     expect(ctx.ui.notify).toHaveBeenCalledWith("/workflow-reset requires interactive mode", "error");
   });
 
-  it("workflow-reset copies the packaged default and records its checksum", async () => {
+  it("workflow-reset copies the packaged defaults and records their checksums", async () => {
     const ctx = createCtx();
     await commands["workflow-reset"].handler("", ctx);
     expect(copyFileSync).toHaveBeenCalledWith(join(PACKAGE_ROOT, "workflow.json"), userDataPath("workflow.json"));
+    expect(copyFileSync).toHaveBeenCalledWith(join(PACKAGE_ROOT, "messages.json"), userDataPath("messages.json"));
+    expect(copyFileSync).toHaveBeenCalledWith(join(PACKAGE_ROOT, "commands.json"), userDataPath("commands.json"));
     expect(writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining("defaults.json.tmp"),
       expect.stringContaining(sha256(JSON.stringify(holder.workflow))),
       "utf-8",
     );
-    expect(ctx.ui.notify).toHaveBeenCalledWith("workflow.json reset to the default workflows", "info");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("reset to the packaged defaults"), "info");
   });
 
-  it("workflow-reset reports when the packaged default is missing", async () => {
+  it("workflow-reset reports when a packaged default is missing", async () => {
     vi.mocked(existsSync).mockImplementation((path: unknown) => String(path).includes(".config"));
     const ctx = createCtx();
     await commands["workflow-reset"].handler("", ctx);
-    expect(ctx.ui.notify).toHaveBeenCalledWith("Could not reset workflow.json", "error");
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Could not reset: workflow.json, messages.json, commands.json", "error");
     expect(copyFileSync).not.toHaveBeenCalled();
   });
 });

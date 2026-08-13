@@ -45,7 +45,7 @@ The package ships with default messages (`1`–`17`), commands (`1` = `git add .
 | `/show-cmd [number]` | Display a command, or list all commands. |
 | `/workflow [workflow] [rounds]` | Run a workflow (default `1`); `dry` or `--dry-run` prints the resolved plan. |
 | `/workflow-edit` | Open the interactive editor. |
-| `/workflow-reset` | Reset `workflow.json` to the packaged default workflows. |
+| `/workflow-reset` | Reset `workflow.json`, `messages.json`, and `commands.json` to the packaged defaults. |
 | `/tree-jump <number>` | Reset the agent's context to the response of message N. |
 | `/workflow-stop` | Cancel the running workflow after the current step. |
 
@@ -194,13 +194,13 @@ Each user copy is tracked against the checksum of the packaged default it was sy
 
 ## Troubleshooting
 
-- **"Message N does not exist."** Create it with `/change-msg N "content"` or in the editor's Messages tab.
+- **"Message N does not exist."** Create it with `/change-msg N "content"`, in the editor's Messages tab, or run `/workflow-reset` to restore the default stores.
 - **"Workflow N does not exist."** The number is not in `workflow.json`. `/workflow` runs the default workflow 1; create other workflows in the editor with `w` or add them to `workflow.json` directly.
 - **The workflow refuses to start.** Another workflow is running — use `/workflow-stop` to cancel it after the current step.
 - **The editor refuses to save.** The Workflow tab references messages or commands that don't exist yet: add and save them in the Messages/Commands tabs first. The Messages/Commands tabs refuse to delete entries still referenced by the workflow: drop those references in the Workflow tab first.
 - **`onlyIfChanges` never fires.** The project is not a git repository, or `git status --porcelain` reports no changes.
 - **My config changes are ignored.** The files live in `~/.config/pi-msg-workflow/`, not inside the installed package. If you edited the packaged copies, back them up and let the user copies sync.
-- **I want the default workflows back.** `/workflow-reset` restores `workflow.json` to the packaged defaults; your message and command stores are untouched.
+- **I want the default workflows back.** `/workflow-reset` restores `workflow.json`, `messages.json`, and `commands.json` to the packaged defaults.
 - **`/tree-jump` says the message is not in the session.** The message text must appear verbatim in the session history; send it first with `/msg N`.
 
 ## Development

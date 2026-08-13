@@ -417,16 +417,17 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("workflow-reset", {
-    description: "Reset workflow.json to the packaged default workflows",
+    description: "Reset workflow.json, messages.json and commands.json to the packaged defaults",
     handler: async (_args, ctx: ExtensionCommandContext) => {
       if (!ctx.hasUI) {
         ctx.ui.notify("/workflow-reset requires interactive mode", "error");
         return;
       }
-      if (resetUserData("workflow.json")) {
-        ctx.ui.notify("workflow.json reset to the default workflows", "info");
+      const failed = ["workflow.json", "messages.json", "commands.json"].filter((file) => !resetUserData(file));
+      if (failed.length === 0) {
+        ctx.ui.notify("Configuration reset to the packaged defaults (workflow.json, messages.json, commands.json)", "info");
       } else {
-        ctx.ui.notify("Could not reset workflow.json", "error");
+        ctx.ui.notify(`Could not reset: ${failed.join(", ")}`, "error");
       }
     },
   });
@@ -457,11 +458,11 @@ export default function (pi: ExtensionAPI) {
       const commands = getCommands();
       const { messages: missing, commands: missingCommands } = missingReferences(config, messages, commands);
       if (missing.length > 0) {
-        ctx.ui.notify(`Missing messages in messages.json: ${missing.join(", ")}`, "error");
+        ctx.ui.notify(`Missing messages in messages.json: ${missing.join(", ")} - run /workflow-reset to restore the default stores or add them with /change-msg.`, "error");
         return;
       }
       if (missingCommands.length > 0) {
-        ctx.ui.notify(`Missing commands in commands.json: ${missingCommands.join(", ")}`, "error");
+        ctx.ui.notify(`Missing commands in commands.json: ${missingCommands.join(", ")} - run /workflow-reset to restore the default stores or add them with /change-cmd.`, "error");
         return;
       }
       if (config.loop.length === 0 || config.loop[0]!.tree === undefined) {
