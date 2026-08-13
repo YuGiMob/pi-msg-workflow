@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
 import { ensureUserData, ensureUserDataDir, userDataPath } from "./user-data.js";
+import { compareNumericKeys, readJsonObject, writeJsonAtomic } from "./json-file.js";
 
 export function createJsonStore(fileName: string): {
   get(): Record<string, string>;
@@ -9,32 +9,18 @@ export function createJsonStore(fileName: string): {
   return {
     get() {
       ensureUserData(fileName);
-      if (!existsSync(file)) return {};
-      try {
-        const parsed = JSON.parse(readFileSync(file, "utf-8").trim());
-        return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-          ? (parsed as Record<string, string>)
-          : {};
-      } catch (err) {
-        console.error(`Failed to read ${fileName}:`, err);
-        return {};
-      }
+      const parsed = readJsonObject(file, (err) => console.error(`Failed to read ${fileName}:`, err));
+      if (parsed === null) return {};
+      return Object.fromEntries(
+        Object.entries(parsed).filter(([, value]) => typeof value === "string"),
+      ) as Record<string, string>;
     },
     set(store) {
       ensureUserDataDir();
       const sorted = Object.fromEntries(
-        Object.entries(store).sort(([a], [b]) => {
-          const na = Number(a);
-          const nb = Number(b);
-          if (Number.isNaN(na) && Number.isNaN(nb)) return a.localeCompare(b);
-          if (Number.isNaN(na)) return 1;
-          if (Number.isNaN(nb)) return -1;
-          return na - nb;
-        }),
+        Object.entries(store).sort(([a], [b]) => compareNumericKeys(a, b)),
       );
-      const tmp = `${file}.tmp`;
-      writeFileSync(tmp, JSON.stringify(sorted, null, 2), "utf-8");
-      renameSync(tmp, file);
+      writeJsonAtomic(file, sorted);
     },
   };
 }

@@ -40,6 +40,12 @@ describe("createJsonStore", () => {
     expect(store.get()).toEqual({});
   });
 
+  it("drops non-string values when the file contains them", () => {
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ "1": "hello", "2": null, "3": 5, "4": {} }) as never);
+    const store = createJsonStore("messages.json");
+    expect(store.get()).toEqual({ "1": "hello" });
+  });
+
   it("reads the store from the package root", () => {
     vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ "1": "hello" }) as never);
     const store = createJsonStore("messages.json");

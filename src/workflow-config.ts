@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
+import { errorMessage } from "./errors.js";
+import { compareNumericKeys, readJsonFile, readJsonObject, writeJsonAtomic } from "./json-file.js";
 import { MAX_ROUNDS } from "./constants.js";
 import { ensureUserData, ensureUserDataDir, userDataPath } from "./user-data.js";
 
@@ -50,29 +51,47 @@ function defaultConfig(): WorkflowConfig {
   };
 }
 
-function isStep(value: unknown): value is LoopStep {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+function stepAction(value: unknown): { action: string; content: unknown; step: Record<string, unknown> } | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const step = value as Record<string, unknown>;
-  const actionKeys = Object.keys(step).filter((key) => key !== "onlyIfChanges");
-  if (actionKeys.length !== 1) return false;
-  const action = actionKeys[0]!;
-  if (action === "tree" && "onlyIfChanges" in step) return false;
-  if (action === "tree" || action === "msg" || action === "cmd") {
-    if (typeof step[action] !== "string" || !/^\d+$/.test(step[action])) return false;
-    if ("onlyIfChanges" in step && typeof step.onlyIfChanges !== "boolean") return false;
-    return true;
-  }
-  return false;
+  const keys = Object.keys(step).filter((key) => key !== "onlyIfChanges");
+  if (keys.length !== 1) return null;
+  const action = keys[0]!;
+  return { action, content: step[action], step };
+}
+
+function isNumericString(value: unknown): value is string {
+  return typeof value === "string" && /^\d+$/.test(value);
+}
+
+function isStep(value: unknown): value is LoopStep {
+  const entry = stepAction(value);
+  if (entry === null) return false;
+  if (entry.action !== "tree" && entry.action !== "msg" && entry.action !== "cmd") return false;
+  if (!isNumericString(entry.content)) return false;
+  if (entry.action === "tree" && "onlyIfChanges" in entry.step) return false;
+  return !("onlyIfChanges" in entry.step) || typeof entry.step.onlyIfChanges === "boolean";
 }
 
 function isStartStep(value: unknown): value is StartStep {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const step = value as Record<string, unknown>;
-  const keys = Object.keys(step);
-  if (keys.length !== 1) return false;
-  const action = keys[0]!;
-  if (action !== "msg" && action !== "cmd") return false;
-  return typeof step[action] === "string" && /^\d+$/.test(step[action]);
+  const entry = stepAction(value);
+  if (entry === null) return false;
+  if (entry.action !== "msg" && entry.action !== "cmd") return false;
+  return !("onlyIfChanges" in entry.step) && isNumericString(entry.content);
+}
+
+function parseStartSteps(
+  input: Record<string, unknown>,
+  errors: string[],
+  tag: string,
+  field: "start" | "finally",
+  fallback: StartStep[],
+): StartStep[] {
+  const value = input[field];
+  if (value === undefined) return fallback;
+  if (Array.isArray(value) && value.every((step) => isStartStep(step))) return value as StartStep[];
+  errors.push(`${tag}Invalid ${field} - must be an array of msg/cmd steps - using default.`);
+  return fallback;
 }
 
 function parseConfig(input: Record<string, unknown>, errors: string[], label: string): WorkflowConfig {
@@ -87,23 +106,8 @@ function parseConfig(input: Record<string, unknown>, errors: string[], label: st
     }
   }
 
-  let start = DEFAULT_START;
-  if (input.start !== undefined) {
-    if (Array.isArray(input.start) && input.start.every((s) => isStartStep(s))) {
-      start = input.start as StartStep[];
-    } else {
-      errors.push(`${tag}Invalid start - must be an array of msg/cmd steps - using default.`);
-    }
-  }
-
-  let finallySteps = DEFAULT_FINALLY;
-  if (input.finally !== undefined) {
-    if (Array.isArray(input.finally) && input.finally.every((s) => isStartStep(s))) {
-      finallySteps = input.finally as StartStep[];
-    } else {
-      errors.push(`${tag}Invalid finally - must be an array of msg/cmd steps - using default.`);
-    }
-  }
+  const start = parseStartSteps(input, errors, tag, "start", DEFAULT_START);
+  const finallySteps = parseStartSteps(input, errors, tag, "finally", DEFAULT_FINALLY);
 
   let loop = DEFAULT_LOOP;
   if (input.loop !== undefined) {
@@ -166,11 +170,9 @@ export function getWorkflows(): { workflows: Record<string, WorkflowConfig>; err
   let raw: unknown = null;
   try {
     ensureUserData("workflow.json");
-    if (existsSync(WORKFLOW_FILE)) {
-      raw = JSON.parse(readFileSync(WORKFLOW_FILE, "utf-8"));
-    }
+    raw = readJsonFile(WORKFLOW_FILE);
   } catch (err) {
-    errors.push(`Could not read workflow.json: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(`Could not read workflow.json: ${errorMessage(err)}`);
     return { workflows: {}, errors, fallback: true };
   }
   if (raw === null) return { workflows: {}, errors, fallback: true };
@@ -187,18 +189,12 @@ export function getWorkflowConfig(index = "1"): { config: WorkflowConfig; errors
 export function setWorkflowConfig(index: string, config: WorkflowConfig): void {
   ensureUserDataDir();
   const workflows: Record<string, unknown> = {};
-  let raw: unknown = null;
-  try {
-    if (existsSync(WORKFLOW_FILE)) raw = JSON.parse(readFileSync(WORKFLOW_FILE, "utf-8"));
-  } catch {
-    raw = null;
-  }
-  if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
-    const input = raw as Record<string, unknown>;
-    if (isSingleConfig(input)) {
-      workflows["1"] = input;
+  const raw = readJsonObject(WORKFLOW_FILE);
+  if (raw !== null) {
+    if (isSingleConfig(raw)) {
+      workflows["1"] = raw;
     } else {
-      for (const [key, value] of Object.entries(input)) {
+      for (const [key, value] of Object.entries(raw)) {
         if (/^\d+$/.test(key) && value !== null && typeof value === "object" && !Array.isArray(value)) {
           workflows[key] = value;
         }
@@ -206,10 +202,8 @@ export function setWorkflowConfig(index: string, config: WorkflowConfig): void {
     }
   }
   workflows[index] = config;
-  const sorted = Object.fromEntries(Object.entries(workflows).sort(([a], [b]) => Number(a) - Number(b)));
-  const tmp = `${WORKFLOW_FILE}.tmp`;
-  writeFileSync(tmp, JSON.stringify(sorted, null, 2), "utf8");
-  renameSync(tmp, WORKFLOW_FILE);
+  const sorted = Object.fromEntries(Object.entries(workflows).sort(([a], [b]) => compareNumericKeys(a, b)));
+  writeJsonAtomic(WORKFLOW_FILE, sorted);
 }
 
 export function referencedIndices(config: WorkflowConfig): string[] {

@@ -682,6 +682,53 @@ describe("workflow extension", () => {
       vi.useRealTimers();
     }
   });
+  it("does not re-send a message after a stop request lands while the session is busy", async () => {
+    vi.useFakeTimers();
+    try {
+      let releaseIdle: () => void = () => {};
+      const idleGate = new Promise<void>((resolve) => {
+        releaseIdle = resolve;
+      });
+      let busy = false;
+      pi.sendUserMessage = vi.fn((content: string) => {
+        if (content === MSG6) {
+          busy = true;
+          return;
+        }
+        const id = String(holder.branch.length);
+        holder.branch.push(userEntry(`u${id}`, content));
+        holder.branch.push(assistantEntry(`a${id}`));
+        holder.state.active = true;
+      });
+      const ctx = createCtx(fullPhaseA(), {
+        isIdle: vi.fn(() => !busy),
+        waitForIdle: vi.fn(async () => {
+          holder.state.active = false;
+          if (busy) await idleGate;
+        }),
+      });
+      const handlerPromise = commands["workflow"].handler("", ctx);
+      await vi.advanceTimersByTimeAsync(100);
+      await commands["workflow-stop"].handler("", ctx);
+      releaseIdle();
+      await vi.advanceTimersByTimeAsync(100);
+      await handlerPromise;
+      expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
+      expect(pi.sendUserMessage).toHaveBeenCalledWith(MSG6, { deliverAs: "followUp" });
+      expect(pi.sendUserMessage).not.toHaveBeenCalledWith(MSG7, { deliverAs: "followUp" });
+      expect(ctx.ui.notify).toHaveBeenCalledWith("Workflow stopped", "info");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("reports failure when sending a message throws", async () => {
+    pi.sendUserMessage = vi.fn(() => {
+      throw new Error("boom");
+    });
+    const ctx = createCtx([]);
+    await commands["workflow"].handler("", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Failed to send message 1", "error");
+  });
 
   it("restores the default working message after completion", async () => {
     const ctx = createCtx(fullPhaseA());

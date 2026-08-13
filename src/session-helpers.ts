@@ -40,6 +40,15 @@ function lastNonUserMessage(entries: SessionEntry[], from: number, to: number): 
   return undefined;
 }
 
+function lastNonUserBeforeNextUser(entries: SessionEntry[], from: number): SessionEntry | undefined {
+  for (let i = from; i < entries.length; i++) {
+    if (userMessageText(entries[i]) !== undefined) {
+      return lastNonUserMessage(entries, from, i - 1);
+    }
+  }
+  return lastNonUserMessage(entries, from, entries.length - 1);
+}
+
 export function findAnchorAfterMessage(entries: SessionEntry[], messageText: string): SessionEntry | undefined {
   let firstUserIndex = -1;
   const messageIndices: number[] = [];
@@ -50,25 +59,11 @@ export function findAnchorAfterMessage(entries: SessionEntry[], messageText: str
     if (text === messageText) messageIndices.push(i);
   }
   for (let i = messageIndices.length - 1; i >= 0; i--) {
-    const anchorIndex = messageIndices[i]!;
-    let nextUserIndex = -1;
-    for (let j = anchorIndex + 1; j < entries.length; j++) {
-      if (userMessageText(entries[j]) !== undefined) {
-        nextUserIndex = j;
-        break;
-      }
-    }
-    const limit = nextUserIndex === -1 ? entries.length - 1 : nextUserIndex - 1;
-    const anchor = lastNonUserMessage(entries, anchorIndex + 1, limit);
+    const anchor = lastNonUserBeforeNextUser(entries, messageIndices[i]! + 1);
     if (anchor !== undefined) return anchor;
   }
   if (firstUserIndex === -1) return undefined;
-  for (let i = firstUserIndex + 1; i < entries.length; i++) {
-    if (userMessageText(entries[i]) !== undefined) {
-      return lastNonUserMessage(entries, firstUserIndex + 1, i - 1);
-    }
-  }
-  return lastNonUserMessage(entries, firstUserIndex + 1, entries.length - 1);
+  return lastNonUserBeforeNextUser(entries, firstUserIndex + 1);
 }
 
 export function countUserTextMatches(entries: SessionEntry[], text: string): number {

@@ -8,6 +8,7 @@ import { getWorkflowConfig, missingReferences, type StartStep, type LoopStep } f
 import { resetUserData } from "./src/user-data.js";
 import { countLeadingPhaseMatches, findAnchorAfterMessage, countUserTextMatches } from "./src/session-helpers.js";
 import { WorkflowEditorOverlay, WorkflowTab, MessagesTab, CommandsTab, MAX_OVERLAY_HEIGHT_RATIO, type EditorTab } from "./src/workflow-editor.js";
+import { errorMessage } from "./src/errors.js";
 
 const OVERLAY_OPTIONS = {
   overlay: true,
@@ -32,23 +33,38 @@ function clip(text: string | undefined, max: number): string {
 }
 
 function describeStep(step: LoopStep, messages: Record<string, string>, commands: Record<string, string>): string {
-  if (step.msg !== undefined) {
-    const suffix = "onlyIfChanges" in step && step.onlyIfChanges ? " (if-changes)" : "";
-    return `msg ${step.msg}${suffix}: ${clip(messages[step.msg], 50)}`;
-  }
-  if (step.cmd !== undefined) {
-    const suffix = "onlyIfChanges" in step && step.onlyIfChanges ? " (if-changes)" : "";
-    return `cmd ${step.cmd}${suffix}: ${clip(commands[step.cmd], 50)}`;
-  }
+  const suffix = step.onlyIfChanges ? " (if-changes)" : "";
+  if (step.msg !== undefined) return `msg ${step.msg}${suffix}: ${clip(messages[step.msg], 50)}`;
+  if (step.cmd !== undefined) return `cmd ${step.cmd}${suffix}: ${clip(commands[step.cmd], 50)}`;
   return `tree ${step.tree!}`;
 }
 function storeCompletions(store: Record<string, string>, noun: string, prefix: string): AutocompleteItem[] {
-  const items = Object.keys(store).map((num) => ({
-    value: num,
-    label: `${noun} ${num}: ${clip(store[num], 50)}`,
-  }));
-  const filtered = items.filter((i) => i.value.startsWith(prefix));
-  return filtered.length > 0 ? filtered : [];
+  return Object.keys(store)
+    .filter((num) => num.startsWith(prefix))
+    .map((num) => ({ value: num, label: `${noun} ${num}: ${clip(store[num], 50)}` }));
+}
+
+function requireInteractive(ctx: ExtensionCommandContext, name: string): boolean {
+  if (ctx.hasUI) return true;
+  ctx.ui.notify(`/${name} requires interactive mode`, "error");
+  return false;
+}
+
+function requireArg(ctx: ExtensionCommandContext, args: string, usage: string): string | null {
+  const trimmed = args.trim();
+  if (trimmed !== "") return trimmed;
+  ctx.ui.notify(`Usage: ${usage}`, "warning");
+  return null;
+}
+
+function notifyMissingEntry(
+  ctx: ExtensionCommandContext,
+  noun: string,
+  num: string,
+  hint?: string,
+  kind: "warning" | "error" = "warning",
+): void {
+  ctx.ui.notify(`${noun} ${num} does not exist.${hint !== undefined ? ` ${hint}` : ""}`, kind);
 }
 
 function registerSendCommand(pi: ExtensionAPI, name: string): void {
@@ -56,18 +72,12 @@ function registerSendCommand(pi: ExtensionAPI, name: string): void {
     description: "Send a predefined message by number",
     getArgumentCompletions: (prefix) => storeCompletions(getMessages(), "Message", prefix),
     handler: async (args, ctx: ExtensionCommandContext) => {
-      if (!ctx.hasUI) {
-        ctx.ui.notify(`/${name} requires interactive mode`, "error");
-        return;
-      }
-      const num = args.trim();
-      if (!num) {
-        ctx.ui.notify(`Usage: /${name} <number>`, "warning");
-        return;
-      }
+      if (!requireInteractive(ctx, name)) return;
+      const num = requireArg(ctx, args, `/${name} <number>`);
+      if (num === null) return;
       const message = getMessages()[num];
       if (!message) {
-        ctx.ui.notify(`Message ${num} does not exist. Use /change-${name} ${num} "content" to create it.`, "warning");
+        notifyMissingEntry(ctx, "Message", num, `Use /change-${name} ${num} "content" to create it.`);
         return;
       }
       pi.sendUserMessage(message, { deliverAs: "followUp" });
@@ -81,18 +91,12 @@ function registerPerformCommand(pi: ExtensionAPI, name: string): void {
     description: "Perform a predefined command by number",
     getArgumentCompletions: (prefix) => storeCompletions(getCommands(), "Command", prefix),
     handler: async (args, ctx: ExtensionCommandContext) => {
-      if (!ctx.hasUI) {
-        ctx.ui.notify(`/${name} requires interactive mode`, "error");
-        return;
-      }
-      const num = args.trim();
-      if (!num) {
-        ctx.ui.notify(`Usage: /${name} <number>`, "warning");
-        return;
-      }
+      if (!requireInteractive(ctx, name)) return;
+      const num = requireArg(ctx, args, `/${name} <number>`);
+      if (num === null) return;
       const command = getCommands()[num];
       if (!command) {
-        ctx.ui.notify(`Command ${num} does not exist. Use /change-${name} ${num} "content" to create it.`, "warning");
+        notifyMissingEntry(ctx, "Command", num, `Use /change-${name} ${num} "content" to create it.`);
         return;
       }
       const result = await runCommand(pi, command, `Running ${command}...`, ctx.ui);
@@ -117,15 +121,10 @@ function registerChangeCommand(
     description: `Change or create a predefined ${noun.toLowerCase()}`,
     getArgumentCompletions: (prefix) => storeCompletions(read(), noun, prefix),
     handler: async (args, ctx: ExtensionCommandContext) => {
-      if (!ctx.hasUI) {
-        ctx.ui.notify(`/change-${name} requires interactive mode`, "error");
-        return;
-      }
-      if (!args.trim()) {
-        ctx.ui.notify(`Usage: /change-${name} <number> <content>`, "warning");
-        return;
-      }
-      const match = args.trim().match(/^(\d+)\s+(?:"([^"]*)"|'([^']*)'|(.+))$/);
+      if (!requireInteractive(ctx, `change-${name}`)) return;
+      const trimmed = requireArg(ctx, args, `/change-${name} <number> <content>`);
+      if (trimmed === null) return;
+      const match = trimmed.match(/^(\d+)\s+(?:"([^"]*)"|'([^']*)'|(.+))$/);
       if (!match) {
         ctx.ui.notify(`Usage: /change-${name} <number> "<content>"`, "warning");
         return;
@@ -141,7 +140,7 @@ function registerChangeCommand(
       try {
         write(store);
       } catch (err) {
-        ctx.ui.notify(`Could not save ${fileLabel}: ${err instanceof Error ? err.message : String(err)}`, "error");
+        ctx.ui.notify(`Could not save ${fileLabel}: ${errorMessage(err)}`, "error");
         return;
       }
       ctx.ui.notify(`${noun} ${num} updated`, "info");
@@ -159,10 +158,7 @@ function registerShowCommand(
     description: `Display the contents of a predefined ${noun.toLowerCase()}`,
     getArgumentCompletions: (prefix) => storeCompletions(read(), noun, prefix),
     handler: async (args, ctx: ExtensionCommandContext) => {
-      if (!ctx.hasUI) {
-        ctx.ui.notify(`/show-${name} requires interactive mode`, "error");
-        return;
-      }
+      if (!requireInteractive(ctx, `show-${name}`)) return;
       const num = args.trim();
       if (!num) {
         const store = read();
@@ -177,7 +173,7 @@ function registerShowCommand(
       }
       const entry = read()[num];
       if (!entry) {
-        ctx.ui.notify(`${noun} ${num} does not exist.`, "warning");
+        notifyMissingEntry(ctx, noun, num);
         return;
       }
       ctx.ui.notify(`${noun} ${num}: ${entry}`, "info");
@@ -212,7 +208,7 @@ async function runStoredCommand(
 ): Promise<boolean> {
   const command = getCommands()[num];
   if (!command) {
-    ctx.ui.notify(`Command ${num} does not exist.`, "error");
+    notifyMissingEntry(ctx, "Command", num, undefined, "error");
     return false;
   }
   const result = await runCommand(pi, command, `${prefix}${command}...`, ctx.ui);
@@ -231,7 +227,7 @@ async function sendStoredMessage(
 ): Promise<boolean> {
   const text = getMessages()[num];
   if (text === undefined) {
-    ctx.ui.notify(`Message ${num} does not exist.`, "error");
+    notifyMissingEntry(ctx, "Message", num, undefined, "error");
     return false;
   }
   ctx.ui.setWorkingMessage(workingText);
@@ -281,8 +277,13 @@ async function sendAndWaitForTurn(
   text: string,
 ): Promise<SendResult> {
   for (let attempt = 0; attempt < SEND_MAX_ATTEMPTS; attempt++) {
+    if (workflowStopRequested) return "cancelled";
     const before = countUserTextMatches(ctx.sessionManager.getBranch(), text);
-    pi.sendUserMessage(text, { deliverAs: "followUp" });
+    try {
+      pi.sendUserMessage(text, { deliverAs: "followUp" });
+    } catch {
+      return "failed";
+    }
     const deadline = Date.now() + SEND_START_TIMEOUT_MS;
     while (Date.now() < deadline) {
       if (countUserTextMatches(ctx.sessionManager.getBranch(), text) > before) {
@@ -323,7 +324,7 @@ function notifyNavigationStatus(
   kind: "warning" | "error",
 ): boolean {
   if (status === "missing") {
-    ctx.ui.notify(`Message ${index} does not exist.`, kind);
+    notifyMissingEntry(ctx, "Message", index, undefined, kind);
     return false;
   }
   if (status === "not-found") {
@@ -359,10 +360,7 @@ export default function (pi: ExtensionAPI) {
     description:
       "Open an interactive editor for the workflows and the message/command stores (workflow.json / messages.json / commands.json)",
     handler: async (_args, ctx: ExtensionCommandContext) => {
-      if (!ctx.hasUI) {
-        ctx.ui.notify("/workflow-edit requires interactive mode", "error");
-        return;
-      }
+      if (!requireInteractive(ctx, "workflow-edit")) return;
       notifyConfigErrors(ctx, getWorkflowConfig().errors);
       await ctx.ui.custom<void>((tui, theme, _keybindings, done) => {
         const tabs: EditorTab[] = [
@@ -385,15 +383,9 @@ export default function (pi: ExtensionAPI) {
     description: "Reset the agent's context to the response of a predefined message (by index)",
     getArgumentCompletions: (prefix) => storeCompletions(getMessages(), "Message", prefix),
     handler: async (args, ctx: ExtensionCommandContext) => {
-      if (!ctx.hasUI) {
-        ctx.ui.notify("/tree-jump requires interactive mode", "error");
-        return;
-      }
-      const index = args.trim();
-      if (!index) {
-        ctx.ui.notify("Usage: /tree-jump <number>", "warning");
-        return;
-      }
+      if (!requireInteractive(ctx, "tree-jump")) return;
+      const index = requireArg(ctx, args, "/tree-jump <number>");
+      if (index === null) return;
       const status = await navigateToMessageAnchor(ctx, index, true);
       if (!notifyNavigationStatus(ctx, index, status, "Navigation cancelled", "warning")) return;
       ctx.ui.notify(`Context reset to the response of message ${index}`, "info");
@@ -403,10 +395,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("workflow-stop", {
     description: "Cancel the running workflow after the current step completes",
     handler: async (_args, ctx: ExtensionCommandContext) => {
-      if (!ctx.hasUI) {
-        ctx.ui.notify("/workflow-stop requires interactive mode", "error");
-        return;
-      }
+      if (!requireInteractive(ctx, "workflow-stop")) return;
       if (!workflowRunning) {
         ctx.ui.notify("No workflow is currently running", "info");
         return;
@@ -419,10 +408,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("workflow-reset", {
     description: "Reset workflow.json, messages.json and commands.json to the packaged defaults",
     handler: async (_args, ctx: ExtensionCommandContext) => {
-      if (!ctx.hasUI) {
-        ctx.ui.notify("/workflow-reset requires interactive mode", "error");
-        return;
-      }
+      if (!requireInteractive(ctx, "workflow-reset")) return;
       const failed = ["workflow.json", "messages.json", "commands.json"].filter((file) => !resetUserData(file));
       if (failed.length === 0) {
         ctx.ui.notify("Configuration reset to the packaged defaults (workflow.json, messages.json, commands.json)", "info");
@@ -436,10 +422,7 @@ export default function (pi: ExtensionAPI) {
     description:
       "Run a numbered workflow (default 1): start messages, then review rounds of tree reset, stored commands and messages (see workflow.json)",
     handler: async (args, ctx: ExtensionCommandContext) => {
-      if (!ctx.hasUI) {
-        ctx.ui.notify("/workflow requires interactive mode", "error");
-        return;
-      }
+      if (!requireInteractive(ctx, "workflow")) return;
       const tokens = args.trim().split(/\s+/).filter(Boolean);
       const dryRun = tokens.some((token) => token === "dry" || token === "--dry-run");
       if (!dryRun && workflowRunning) {
@@ -471,14 +454,9 @@ export default function (pi: ExtensionAPI) {
       }
       const rounds = numeric[1] === undefined ? config.rounds : parseRounds(numeric[1], config.rounds);
       if (dryRun) {
-        const startText = config.start.length > 0
-          ? config.start.map((step) => describeStep(step, messages, commands)).join(", ")
-          : "(none)";
-        const loopText = config.loop.map((step) => describeStep(step, messages, commands)).join(", ");
-        const finallyText = config.finally.length > 0
-          ? config.finally.map((step) => describeStep(step, messages, commands)).join(", ")
-          : "(none)";
-        ctx.ui.notify(`[pi-msg-workflow] Dry run: Workflow ${index}, ${rounds} round${rounds === 1 ? "" : "s"}\nstart: ${startText}\nloop: ${loopText}\nfinally: ${finallyText}`, "info");
+        const describeSteps = (steps: StartStep[] | LoopStep[]) =>
+          steps.length > 0 ? steps.map((step) => describeStep(step, messages, commands)).join(", ") : "(none)";
+        ctx.ui.notify(`[pi-msg-workflow] Dry run: Workflow ${index}, ${rounds} round${rounds === 1 ? "" : "s"}\nstart: ${describeSteps(config.start)}\nloop: ${describeSteps(config.loop)}\nfinally: ${describeSteps(config.finally)}`, "info");
         return;
       }
       workflowRunning = true;

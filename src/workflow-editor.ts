@@ -4,6 +4,8 @@ import { getMessages, setMessages } from "./messages.js";
 import { getCommands, setCommands } from "./commands.js";
 import { MAX_ROUNDS } from "./constants.js";
 import { getWorkflows, getWorkflowConfig, setWorkflowConfig, missingReferences, referencedIndices, referencedCommands, type LoopStep, type WorkflowConfig } from "./workflow-config.js";
+import { compareNumericKeys } from "./json-file.js";
+import { errorMessage } from "./errors.js";
 
 export interface EditorTab {
   readonly name: string;
@@ -35,6 +37,10 @@ const PASTE_END = "\x1b[201~";
 function truncate(text: string, width: number): string {
   if (visibleWidth(text) <= width) return text;
   return `${takePrefix(text, width - 1)}…`;
+}
+
+function storePreview(store: Record<string, string>, key: string): string {
+  return store[key] ? store[key]! : "(missing)";
 }
 
 function takePrefix(text: string, width: number): string {
@@ -148,6 +154,17 @@ abstract class BaseEditorTab implements EditorTab {
     this.undoStack = [];
   }
 
+  protected performUndo(restore: (snap: unknown) => void, equalsSaved: () => boolean): void {
+    const snap = this.popUndo();
+    if (snap === undefined) {
+      this.setFlash("Nothing to undo");
+      return;
+    }
+    restore(snap);
+    this.dirty = !equalsSaved();
+    this.setFlash(this.dirty ? "Undone (press s to save)" : "Undone");
+  }
+
   protected startInput(prompt: string, commit: (value: string) => string | null): void {
     this.input = { prompt, buffer: "", cursor: 0, commit };
   }
@@ -194,23 +211,25 @@ abstract class BaseEditorTab implements EditorTab {
       return true;
     }
     if (data.startsWith(PASTE_START) && data.endsWith(PASTE_END)) {
-      const pasted = data.slice(PASTE_START.length, -PASTE_END.length).replace(/[\r\n]+/g, " ");
-      this.input.buffer = this.input.buffer.slice(0, this.input.cursor) + pasted + this.input.buffer.slice(this.input.cursor);
-      this.input.cursor += pasted.length;
+      this.insertAtCursor(data.slice(PASTE_START.length, -PASTE_END.length).replace(/[\r\n]+/g, " "));
       return true;
     }
     const kittyPrintable = decodeKittyPrintable(data);
     if (kittyPrintable !== undefined) {
-      this.input.buffer = this.input.buffer.slice(0, this.input.cursor) + kittyPrintable + this.input.buffer.slice(this.input.cursor);
-      this.input.cursor += kittyPrintable.length;
+      this.insertAtCursor(kittyPrintable);
       return true;
     }
     if (data.length === 1 && data.charCodeAt(0) >= 32) {
-      this.input.buffer = this.input.buffer.slice(0, this.input.cursor) + data + this.input.buffer.slice(this.input.cursor);
-      this.input.cursor += 1;
+      this.insertAtCursor(data);
       return true;
     }
     return true;
+  }
+
+  private insertAtCursor(text: string): void {
+    const input = this.input!;
+    input.buffer = input.buffer.slice(0, input.cursor) + text + input.buffer.slice(input.cursor);
+    input.cursor += text.length;
   }
 
   getAboveContentLine(innerWidth: number): string[] {
@@ -233,6 +252,7 @@ interface WorkflowDraft {
 }
 
 type WorkflowSnapshot = WorkflowDraft & { selection: number };
+type StoreSnapshot = { draft: Record<string, string>; keys: string[]; selection: number };
 
 type SelectableKind = "start" | "tree" | "loop" | "finally";
 
@@ -310,14 +330,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       && deepEqual(current.finally, this.savedSnapshot.finally);
   }
   private undo(): void {
-    const snap = this.popUndo();
-    if (snap === undefined) {
-      this.setFlash("Nothing to undo");
-      return;
-    }
-    this.restore(snap as WorkflowSnapshot);
-    this.dirty = !this.equalsSaved();
-    this.setFlash(this.dirty ? "Undone (press s to save)" : "Undone");
+    this.performUndo((snap) => this.restore(snap as WorkflowSnapshot), () => this.equalsSaved());
   }
 
   private rowCount(): number {
@@ -384,15 +397,19 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       return true;
     }
     if (matchesKey(data, "[")) {
-      this.pushUndo(this.snapshot());
-      this.draft.rounds = Math.max(1, this.draft.rounds - 1);
-      this.dirty = true;
+      if (this.draft.rounds > 1) {
+        this.pushUndo(this.snapshot());
+        this.draft.rounds -= 1;
+        this.dirty = true;
+      }
       return true;
     }
     if (matchesKey(data, "]")) {
-      this.pushUndo(this.snapshot());
-      this.draft.rounds = Math.min(MAX_ROUNDS, this.draft.rounds + 1);
-      this.dirty = true;
+      if (this.draft.rounds < MAX_ROUNDS) {
+        this.pushUndo(this.snapshot());
+        this.draft.rounds += 1;
+        this.dirty = true;
+      }
       return true;
     }
     if (matchesKey(data, "s")) {
@@ -416,15 +433,6 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
   }
 
   private editRow(kind: SelectableKind, position: number): void {
-    if (kind === "start") {
-      const step = this.draft.start[position]!;
-      if (step.msg !== undefined) {
-        this.editStepIndex(this.draft.start, position, "msg", step.msg);
-      } else if (step.cmd !== undefined) {
-        this.editStepIndex(this.draft.start, position, "cmd", step.cmd);
-      }
-      return;
-    }
     if (kind === "tree") {
       const current = this.draft.tree;
       this.startInput(`tree anchor message index (current: ${current}): `, (value) => {
@@ -437,46 +445,24 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       });
       return;
     }
-    if (kind === "loop") {
-      const step = this.draft.loop[position]!;
-      if (step.msg !== undefined) {
-        this.editStepIndex(this.draft.loop, position, "msg", step.msg);
-        return;
-      }
-      if (step.cmd !== undefined) {
-        this.editStepIndex(this.draft.loop, position, "cmd", step.cmd);
-        return;
-      }
-      return;
-    }
-    const step = this.draft.finally[position]!;
+    const target = kind === "start" ? this.draft.start : kind === "loop" ? this.draft.loop : this.draft.finally;
+    const step = target[position]!;
     if (step.msg !== undefined) {
-      this.editStepIndex(this.draft.finally, position, "msg", step.msg);
+      this.editStepIndex(target, position, "msg", step.msg);
     } else if (step.cmd !== undefined) {
-      this.editStepIndex(this.draft.finally, position, "cmd", step.cmd);
+      this.editStepIndex(target, position, "cmd", step.cmd);
     }
   }
 
   private addStepPrompt(prompt: string, target: LoopStep[], select: () => void): void {
     this.startInput(prompt, (value) => {
-      const text = value.trim();
-      const msgMatch = text.match(/^msg\s+(\d+)$/);
-      if (msgMatch) {
-        this.pushUndo(this.snapshot());
-        target.push({ msg: msgMatch[1]! });
-        select();
-        this.dirty = true;
-        return null;
-      }
-      const cmdMatch = text.match(/^cmd\s+(\d+)$/);
-      if (cmdMatch) {
-        this.pushUndo(this.snapshot());
-        target.push({ cmd: cmdMatch[1]! });
-        select();
-        this.dirty = true;
-        return null;
-      }
-      return "Expected: msg <number> or cmd <number>.";
+      const match = value.trim().match(/^(msg|cmd)\s+(\d+)$/);
+      if (match === null) return "Expected: msg <number> or cmd <number>.";
+      this.pushUndo(this.snapshot());
+      target.push(match[1] === "msg" ? { msg: match[2]! } : { cmd: match[2]! });
+      select();
+      this.dirty = true;
+      return null;
     });
   }
 
@@ -578,7 +564,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     try {
       setWorkflowConfig(this.index, config);
     } catch (err) {
-      this.setFlash(`Could not save workflow.json: ${err instanceof Error ? err.message : String(err)}`);
+      this.setFlash(`Could not save workflow.json: ${errorMessage(err)}`);
       return;
     }
     this.savedSnapshot = this.snapshot();
@@ -596,40 +582,24 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       const trimmed = truncate(` ${text}`, innerWidth);
       lines.push(selected ? th.bg("selectedBg", th.fg("text", trimmed)) : th.fg("text", trimmed));
     };
+    const renderSteps = (steps: LoopStep[], selected: (i: number) => boolean) => {
+      steps.forEach((step, i) => {
+        const suffix = step.onlyIfChanges ? " [if-changes]" : "";
+        if (step.msg !== undefined) {
+          row(`msg ${step.msg}${suffix}: ${storePreview(messages, step.msg)}`, selected(i));
+        } else if (step.cmd !== undefined) {
+          row(`cmd ${step.cmd}${suffix}: ${storePreview(commands, step.cmd)}`, selected(i));
+        }
+      });
+    };
     lines.push(th.fg("dim", ` Workflow ${this.index} · Rounds: ${this.draft.rounds}   ([ ] change · w switch)`));
     lines.push(th.fg("dim", " start"));
-    this.draft.start.forEach((step, i) => {
-      if (step.msg !== undefined) {
-        const preview = messages[step.msg] ? messages[step.msg]! : "(missing)";
-        row(`msg ${step.msg}: ${preview}`, this.selection === i);
-      } else if (step.cmd !== undefined) {
-        const preview = commands[step.cmd] ? commands[step.cmd]! : "(missing)";
-        row(`cmd ${step.cmd}: ${preview}`, this.selection === i);
-      }
-    });
+    renderSteps(this.draft.start, (i) => this.selection === i);
     lines.push(th.fg("dim", " loop"));
-    const treePreview = messages[this.draft.tree] ? messages[this.draft.tree]! : "(missing)";
-    row(`tree → ${this.draft.tree}: ${treePreview}  (fixed first)`, this.selection === this.draft.start.length);
-    this.draft.loop.forEach((step, i) => {
-      const selected = this.selection === this.draft.start.length + 1 + i;
-      if (step.msg !== undefined) {
-        row(`msg ${step.msg}${step.onlyIfChanges ? " [if-changes]" : ""}`, selected);
-      } else if (step.cmd !== undefined) {
-        const preview = commands[step.cmd] ? commands[step.cmd]! : "(missing)";
-        row(`cmd ${step.cmd}${step.onlyIfChanges ? " [if-changes]" : ""}: ${preview}`, selected);
-      }
-    });
+    row(`tree → ${this.draft.tree}: ${storePreview(messages, this.draft.tree)}  (fixed first)`, this.selection === this.draft.start.length);
+    renderSteps(this.draft.loop, (i) => this.selection === this.draft.start.length + 1 + i);
     lines.push(th.fg("dim", " finally"));
-    this.draft.finally.forEach((step, i) => {
-      const selected = this.selection === this.draft.start.length + 1 + this.draft.loop.length + i;
-      if (step.msg !== undefined) {
-        const preview = messages[step.msg] ? messages[step.msg]! : "(missing)";
-        row(`msg ${step.msg}: ${preview}`, selected);
-      } else if (step.cmd !== undefined) {
-        const preview = commands[step.cmd] ? commands[step.cmd]! : "(missing)";
-        row(`cmd ${step.cmd}: ${preview}`, selected);
-      }
-    });
+    renderSteps(this.draft.finally, (i) => this.selection === this.draft.start.length + 1 + this.draft.loop.length + i);
     while (lines.length < height) lines.push(th.fg("dim", "~"));
     return lines.slice(0, height);
   }
@@ -640,7 +610,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
   readonly keys: string[];
   private selection = 0;
   private scroll = 0;
-  private savedSnapshot: { draft: Record<string, string>; keys: string[] };
+  private savedSnapshot: StoreSnapshot;
 
   protected constructor(
     private readonly theme: Theme,
@@ -650,14 +620,14 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
   ) {
     super();
     this.draft = { ...this.load() };
-    this.keys = Object.keys(this.draft).sort((a, b) => Number(a) - Number(b));
-    this.savedSnapshot = { draft: { ...this.draft }, keys: [...this.keys] };
+    this.keys = Object.keys(this.draft).sort(compareNumericKeys);
+    this.savedSnapshot = this.snapshot();
   }
 
-  private snapshot(): { draft: Record<string, string>; keys: string[]; selection: number } {
+  private snapshot(): StoreSnapshot {
     return { draft: { ...this.draft }, keys: [...this.keys], selection: this.selection };
   }
-  private restore(snap: { draft: Record<string, string>; keys: string[]; selection: number }): void {
+  private restore(snap: StoreSnapshot): void {
     for (const key of Object.keys(this.draft)) delete this.draft[key];
     Object.assign(this.draft, snap.draft);
     this.keys.length = 0;
@@ -668,14 +638,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
     return deepEqual(this.draft, this.savedSnapshot.draft);
   }
   private undo(): void {
-    const snap = this.popUndo();
-    if (snap === undefined) {
-      this.setFlash("Nothing to undo");
-      return;
-    }
-    this.restore(snap as { draft: Record<string, string>; keys: string[]; selection: number });
-    this.dirty = !this.equalsSaved();
-    this.setFlash(this.dirty ? "Undone (press s to save)" : "Undone");
+    this.performUndo((snap) => this.restore(snap as StoreSnapshot), () => this.equalsSaved());
   }
   protected abstract load(): Record<string, string>;
   protected abstract write(store: Record<string, string>): void;
@@ -748,7 +711,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
       this.pushUndo(this.snapshot());
       this.draft[key] = content;
       this.keys.push(key);
-      this.keys.sort((a, b) => Number(a) - Number(b));
+      this.keys.sort(compareNumericKeys);
       this.selection = this.keys.indexOf(key);
       this.dirty = true;
       return null;
@@ -777,10 +740,10 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
     try {
       this.write({ ...this.draft });
     } catch (err) {
-      this.setFlash(`Could not save ${this.fileLabel}: ${err instanceof Error ? err.message : String(err)}`);
+      this.setFlash(`Could not save ${this.fileLabel}: ${errorMessage(err)}`);
       return;
     }
-    this.savedSnapshot = { draft: { ...this.draft }, keys: [...this.keys] };
+    this.savedSnapshot = this.snapshot();
     this.dirty = false;
     this.setFlash(`${this.fileLabel} saved`);
     this.notify(`${this.fileLabel} saved`, "info");

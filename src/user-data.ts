@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readJsonObject, writeJsonAtomic } from "./json-file.js";
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULTS_FILE = "defaults.json";
@@ -23,30 +24,19 @@ export function userDataPath(fileName: string): string {
 export function ensureUserDataDir(): void {
   mkdirSync(userDataDir(), { recursive: true });
 }
+
 function checksumFile(filePath: string): string {
   return createHash("sha256").update(readFileSync(filePath)).digest("hex");
 }
 
 function readDefaults(): Record<string, string> {
-  const file = userDataPath(DEFAULTS_FILE);
-  if (!existsSync(file)) return {};
-  try {
-    const parsed = JSON.parse(readFileSync(file, "utf-8"));
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, string>)
-      : {};
-  } catch {
-    return {};
-  }
+  return (readJsonObject(userDataPath(DEFAULTS_FILE)) ?? {}) as Record<string, string>;
 }
 
 function setDefaultChecksum(fileName: string, checksum: string): void {
   const defaults = readDefaults();
   defaults[fileName] = checksum;
-  const file = userDataPath(DEFAULTS_FILE);
-  const tmp = `${file}.tmp`;
-  writeFileSync(tmp, JSON.stringify(defaults, null, 2), "utf-8");
-  renameSync(tmp, file);
+  writeJsonAtomic(userDataPath(DEFAULTS_FILE), defaults);
 }
 
 export function ensureUserData(fileName: string): void {

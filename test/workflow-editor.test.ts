@@ -304,6 +304,18 @@ describe("WorkflowTab", () => {
     expect(tab.draft.finally[0]).toEqual({ msg: "8" });
     expect(tab.getAboveContentLine(80)[0]).toContain("if-changes applies to loop msg and cmd steps");
   });
+  it("refuses if-changes on a tree step embedded in the loop", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 2, start: [], loop: [{ tree: "1" }, { tree: "2" }, { msg: "6" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any, notify);
+    tab.handleInput("j");
+    tab.handleInput("t");
+    expect(tab.draft.loop[0]).toEqual({ tree: "2" });
+    expect(tab.dirty).toBe(false);
+  });
 
   it("saves finally steps to workflow.json", () => {
     vi.mocked(readFileSync).mockImplementation((path: unknown) => {
@@ -402,7 +414,7 @@ describe("WorkflowTab", () => {
     tab.handleInput("2");
     tab.handleInput("\r");
     tab.save();
-    expect(writeFileSync).toHaveBeenCalledWith(expect.stringContaining("workflow.json.tmp"), expect.any(String), "utf8");
+    expect(writeFileSync).toHaveBeenCalledWith(expect.stringContaining("workflow.json.tmp"), expect.any(String), "utf-8");
     expect(renameSync).toHaveBeenCalledWith(expect.stringContaining("workflow.json.tmp"), expect.stringContaining("workflow.json"));
     const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
     expect(written["1"].rounds).toBe(2);
@@ -486,6 +498,13 @@ describe("WorkflowTab", () => {
     tab.handleInput("u");
     expect(tab.draft.rounds).toBe(2);
   });
+  it("does not push an undo slot or mark dirty when rounds are already at the limit", () => {
+    tab.handleInput("[");
+    tab.handleInput("[");
+    tab.handleInput("u");
+    expect(tab.draft.rounds).toBe(2);
+    expect(tab.dirty).toBe(false);
+  });
   it("undoes an added step", () => {
     for (let i = 0; i < 7; i++) tab.handleInput("j");
     tab.handleInput("a");
@@ -534,7 +553,8 @@ describe("WorkflowTab", () => {
     const lines = tab.render(78, 20);
     expect(lines[0]).toContain("Rounds: 2");
     expect(lines.join("\n")).toContain("tree → 1");
-    expect(lines.join("\n")).toContain("msg 6");
+    expect(lines.join("\n")).toContain(`msg 6: ${MSG6}`);
+    expect(lines.join("\n")).toContain(`msg 5 [if-changes]: ${MSG5}`);
     expect(lines.join("\n")).toContain("cmd 1: git add .");
     expect(lines.join("\n")).toContain("cmd 1 [if-changes]: git add .");
   });
