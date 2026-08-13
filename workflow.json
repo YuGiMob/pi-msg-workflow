@@ -25,19 +25,19 @@
     "start": [
       { "msg": "1" },
       { "msg": "9" },
-      { "msg": "12" },
-      { "msg": "13" }
+      { "msg": "10" },
+      { "msg": "11" }
     ],
     "loop": [
       { "tree": "1" },
       { "cmd": "1" },
-      { "msg": "14" },
-      { "msg": "15" },
-      { "msg": "16", "onlyIfChanges": true },
+      { "msg": "12" },
+      { "msg": "13" },
+      { "msg": "14", "onlyIfChanges": true },
       { "cmd": "1", "onlyIfChanges": true }
     ],
     "finally": [
-      { "msg": "17" }
+      { "msg": "15" }
     ]
   }
 }

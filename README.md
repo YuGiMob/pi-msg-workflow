@@ -31,7 +31,7 @@ pi install npm:pi-msg-workflow
 /workflow
 ```
 
-The package ships with default messages (`1`–`17`), commands (`1` = `git add .`), and two workflows, so everything works out of the box.
+The package ships with default messages (`1`–`15`), commands (`1` = `git add .`), and two workflows, so everything works out of the box.
 
 ## Commands
 
@@ -81,22 +81,21 @@ Commands that take a number offer Tab autocomplete.
   "2": {
     "rounds": 2,
     "start": [
+      { "msg": "1" },
       { "msg": "9" },
       { "msg": "10" },
-      { "msg": "11" },
-      { "msg": "12" },
-      { "msg": "13" }
+      { "msg": "11" }
     ],
     "loop": [
-      { "tree": "9" },
+      { "tree": "1" },
       { "cmd": "1" },
-      { "msg": "14" },
-      { "msg": "15" },
-      { "msg": "16", "onlyIfChanges": true },
+      { "msg": "12" },
+      { "msg": "13" },
+      { "msg": "14", "onlyIfChanges": true },
       { "cmd": "1", "onlyIfChanges": true }
     ],
     "finally": [
-      { "msg": "17" }
+      { "msg": "15" }
     ]
   }
 }
@@ -129,7 +128,7 @@ Ordered steps repeated each round. The first step must be a `tree` step — the 
 | `{ "cmd": "1", "onlyIfChanges": true }` | Perform command 1 only when `git status --porcelain` shows changes. |
 
 `onlyIfChanges` runs `git status --porcelain` in the project directory, so it requires the project to be a git repository. A msg or cmd step with `onlyIfChanges` is skipped when there are no changes.
-Message indices refer to the numbered message store — `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store — `/cmd 1`, `/change-cmd 1 "git add ."`, and `{ "cmd": "1" }` all address the same command. The default message store is numbered `1`–`9` and `12`–`17`: `1`–`8` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix, summarize), `9` and `12`–`17` serve workflow 2 (combined review, value check, implement, closer look, fix, validate, summarize).
+Message indices refer to the numbered message store — `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store — `/cmd 1`, `/change-cmd 1 "git add ."`, and `{ "cmd": "1" }` all address the same command. The default message store is numbered `1`–`15`: `1`–`8` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix, summarize), `9`–`15` serve workflow 2 (combined review, value check, implement, closer look, fix, validate, summarize).
 
 #### `finally`
 
@@ -147,13 +146,13 @@ Workflow 2 is a focused review loop over duplicated logic, unnecessary complexit
 | --- | --- |
 | `{ "msg": "1" }` | Read the entirety of the codebase (shared with workflow 1; skipped when it already matches the leading user messages of the session). |
 | `{ "msg": "9" }` | Find duplicated logic (the same pattern repeated three or more times that should be extracted into shared helpers), unnecessary complexity (over-engineering, dead code, redundant branches), and bug risks (edge cases, missing error handling, off-by-one errors, race conditions, resource leaks) in one pass. |
-| `{ "msg": "12" }` | Value check: are the deduplication, simplification, and bug-reduction changes actually worth implementing? |
-| `{ "msg": "13" }` | Implement all of the changes worth implementing. |
-| `{ "msg": "14" }` | Take a closer look at all of the changes via `git diff --staged`. |
-| `{ "msg": "15" }` | If the review found any issues with the staged changes, fix them now. |
-| `{ "msg": "16", "onlyIfChanges": true }` | Validate the git status and git diff only when there are changes. |
+| `{ "msg": "10" }` | Value check: are the deduplication, simplification, and bug-reduction changes actually worth implementing? |
+| `{ "msg": "11" }` | Implement all of the changes worth implementing. |
+| `{ "msg": "12" }` | Take a closer look at all of the changes via `git diff --staged`. |
+| `{ "msg": "13" }` | If the review found any issues with the staged changes, fix them now. |
+| `{ "msg": "14", "onlyIfChanges": true }` | Validate the git status and git diff only when there are changes. |
 | `{ "cmd": "1", "onlyIfChanges": true }` | Stage the changes only when there are changes. |
-| `{ "msg": "17" }` | Summarize all of the changes since the last commit. |
+| `{ "msg": "15" }` | Summarize all of the changes since the last commit. |
 
 The tree step resets the context to the response of message 1, the shared read-the-codebase step of this workflow.
 ## The editor
