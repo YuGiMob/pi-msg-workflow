@@ -134,6 +134,14 @@ describe("messages extension", () => {
       expect(ctx.ui.notify).toHaveBeenCalledWith("Message 3 updated", "info");
     });
 
+    it("rejects content that starts with a quote", async () => {
+      const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
+      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
+      await cmd.cmd.handler('3 "a" b', ctx);
+      expect(writeFileSync).not.toHaveBeenCalled();
+      expect(ctx.ui.notify).toHaveBeenCalledWith("Usage: /change-msg <number> \"<content>\"", "warning");
+    });
+
     it("writes atomically via a tmp file and rename", async () => {
       const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
       const ctx = { hasUI: true, ui: { notify: vi.fn() } };

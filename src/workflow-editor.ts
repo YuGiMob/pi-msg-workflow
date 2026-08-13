@@ -127,6 +127,7 @@ function deepEqual(a: unknown, b: unknown): boolean {
 abstract class BaseEditorTab implements EditorTab {
   abstract readonly name: string;
   abstract readonly footerHints: string;
+  protected abstract snapshot(): unknown;
   dirty = false;
   protected flash: string | null = null;
   protected input: InputState | null = null;
@@ -167,6 +168,22 @@ abstract class BaseEditorTab implements EditorTab {
 
   protected startInput(prompt: string, commit: (value: string) => string | null): void {
     this.input = { prompt, buffer: "", cursor: 0, commit };
+  }
+
+  protected mutate(fn: () => void): void {
+    this.pushUndo(this.snapshot());
+    fn();
+    this.dirty = true;
+  }
+
+  protected commitInput(prompt: string, validate: (value: string) => string | null, apply: (value: string) => void): void {
+    this.startInput(prompt, (value) => {
+      const trimmed = value.trim();
+      const error = validate(trimmed);
+      if (error !== null) return error;
+      this.mutate(() => apply(trimmed));
+      return null;
+    });
   }
 
   protected handleInputMode(data: string): boolean {
@@ -256,12 +273,14 @@ type StoreSnapshot = { draft: Record<string, string>; keys: string[]; selection:
 
 type SelectableKind = "start" | "tree" | "loop" | "finally";
 
+type LoadResult = { ok: true; flash?: string } | { ok: false; flash: string };
 export class WorkflowTab extends BaseEditorTab implements EditorTab {
   private index = "1";
   readonly footerHints = "j/k sel · e edit · a add · x del · J/K move · t if-chg · [ ] rnds · w switch · u undo · s save";
   readonly draft: WorkflowDraft;
   private selection = 0;
   private savedSnapshot: WorkflowSnapshot;
+  private loadFailedIndex: string | null = null;
 
   get name(): string {
     return `Workflow ${this.index}`;
@@ -270,22 +289,43 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
   constructor(private readonly theme: Theme, private readonly notify: Notify, index = "1") {
     super();
     this.draft = { rounds: 2, start: [], tree: "1", loop: [], finally: [] };
-    this.loadWorkflow(index);
+    const result = this.loadWorkflow(index);
+    if (result.flash !== undefined) this.setFlash(result.flash);
     this.savedSnapshot = this.snapshot();
   }
 
-  private loadWorkflow(index: string): void {
+  private loadWorkflow(index: string): LoadResult {
+    const { config, errors } = getWorkflowConfig(index);
+    const first = config.loop[0];
+    let tree: string;
+    let loop: LoopStep[];
+    let flash: string | undefined;
+    if (first?.tree !== undefined) {
+      tree = first.tree;
+      loop = config.loop.slice(1);
+    } else {
+      const treeIndex = config.loop.findIndex((step) => step.tree !== undefined);
+      if (treeIndex === -1) {
+        this.loadFailedIndex = index;
+        return { ok: false, flash: `Workflow ${index} has no tree step - fix workflow.json first` };
+      }
+      tree = config.loop[treeIndex]!.tree!;
+      loop = config.loop.filter((_, i) => i !== treeIndex);
+      flash = `Workflow ${index} had a misplaced tree step - moved to the start of the loop`;
+    }
+    this.loadFailedIndex = null;
     this.index = index;
-    const { config } = getWorkflowConfig(index);
     this.draft.rounds = config.rounds;
     this.draft.start = config.start.map((step) => ({ ...step }));
-    this.draft.tree = config.loop[0]?.tree ?? "1";
-    this.draft.loop = config.loop.slice(1).map((step) => ({ ...step }));
+    this.draft.tree = tree;
+    this.draft.loop = loop.map((step) => ({ ...step }));
     this.draft.finally = config.finally.map((step) => ({ ...step }));
     this.selection = 0;
     this.savedSnapshot = this.snapshot();
     this.dirty = false;
     this.clearUndo();
+    if (errors.length > 0 && flash === undefined) flash = errors[0]!;
+    return { ok: true, flash };
   }
 
   private switchWorkflow(): void {
@@ -297,13 +337,17 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       const index = value.trim();
       if (!/^\d+$/.test(index)) return "Workflow number must be a number.";
       const { exists } = getWorkflowConfig(index);
-      this.loadWorkflow(index);
-      this.setFlash(exists ? `Editing workflow ${index}` : `Workflow ${index} is new - press s to create it`);
+      const result = this.loadWorkflow(index);
+      if (!result.ok) {
+        this.setFlash(result.flash);
+        return null;
+      }
+      this.setFlash(result.flash ?? (exists ? `Editing workflow ${index}` : `Workflow ${index} is new - press s to create it`));
       return null;
     });
   }
 
-  private snapshot(): WorkflowSnapshot {
+  protected snapshot(): WorkflowSnapshot {
     return {
       rounds: this.draft.rounds,
       start: this.draft.start.map((step) => ({ ...step })),
@@ -397,19 +441,11 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       return true;
     }
     if (matchesKey(data, "[")) {
-      if (this.draft.rounds > 1) {
-        this.pushUndo(this.snapshot());
-        this.draft.rounds -= 1;
-        this.dirty = true;
-      }
+      if (this.draft.rounds > 1) this.mutate(() => { this.draft.rounds -= 1; });
       return true;
     }
     if (matchesKey(data, "]")) {
-      if (this.draft.rounds < MAX_ROUNDS) {
-        this.pushUndo(this.snapshot());
-        this.draft.rounds += 1;
-        this.dirty = true;
-      }
+      if (this.draft.rounds < MAX_ROUNDS) this.mutate(() => { this.draft.rounds += 1; });
       return true;
     }
     if (matchesKey(data, "s")) {
@@ -421,27 +457,21 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
 
   private editStepIndex(target: LoopStep[], position: number, action: "msg" | "cmd", current: string): void {
     const label = action === "msg" ? "message" : "command";
-    this.startInput(`${label} index for ${action} step (current: ${current}): `, (value) => {
-      const index = value.trim();
-      if (!/^\d+$/.test(index)) return "Index must be a number.";
-      this.pushUndo(this.snapshot());
+    this.commitInput(`${label} index for ${action} step (current: ${current}): `, (value) => {
+      return /^\d+$/.test(value) ? null : "Index must be a number.";
+    }, (value) => {
       const step = target[position]!;
-      target[position] = action === "msg" ? { ...step, msg: index } : { ...step, cmd: index };
-      this.dirty = true;
-      return null;
+      target[position] = action === "msg" ? { ...step, msg: value } : { ...step, cmd: value };
     });
   }
 
   private editRow(kind: SelectableKind, position: number): void {
     if (kind === "tree") {
       const current = this.draft.tree;
-      this.startInput(`tree anchor message index (current: ${current}): `, (value) => {
-        const index = value.trim();
-        if (!/^\d+$/.test(index)) return "Index must be a number.";
-        this.pushUndo(this.snapshot());
-        this.draft.tree = index;
-        this.dirty = true;
-        return null;
+      this.commitInput(`tree anchor message index (current: ${current}): `, (value) => {
+        return /^\d+$/.test(value) ? null : "Index must be a number.";
+      }, (value) => {
+        this.draft.tree = value;
       });
       return;
     }
@@ -455,14 +485,12 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
   }
 
   private addStepPrompt(prompt: string, target: LoopStep[], select: () => void): void {
-    this.startInput(prompt, (value) => {
-      const match = value.trim().match(/^(msg|cmd)\s+(\d+)$/);
-      if (match === null) return "Expected: msg <number> or cmd <number>.";
-      this.pushUndo(this.snapshot());
+    this.commitInput(prompt, (value) => {
+      return /^(msg|cmd)\s+(\d+)$/.test(value) ? null : "Expected: msg <number> or cmd <number>.";
+    }, (value) => {
+      const match = value.match(/^(msg|cmd)\s+(\d+)$/)!;
       target.push(match[1] === "msg" ? { msg: match[2]! } : { cmd: match[2]! });
       select();
-      this.dirty = true;
-      return null;
     });
   }
 
@@ -493,16 +521,16 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       this.setFlash("The tree step is fixed as the first loop step");
       return;
     }
-    this.pushUndo(this.snapshot());
-    if (kind === "start") {
-      this.draft.start.splice(position, 1);
-    } else if (kind === "loop") {
-      this.draft.loop.splice(position, 1);
-    } else {
-      this.draft.finally.splice(position, 1);
-    }
-    this.selection = Math.min(this.selection, this.rowCount() - 1);
-    this.dirty = true;
+    this.mutate(() => {
+      if (kind === "start") {
+        this.draft.start.splice(position, 1);
+      } else if (kind === "loop") {
+        this.draft.loop.splice(position, 1);
+      } else {
+        this.draft.finally.splice(position, 1);
+      }
+      this.selection = Math.min(this.selection, this.rowCount() - 1);
+    });
     this.setFlash("Deleted (press s to save)");
   }
 
@@ -536,16 +564,20 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       this.setFlash("if-changes applies to loop msg and cmd steps");
       return;
     }
-    this.pushUndo(this.snapshot());
-    if (step.onlyIfChanges) {
-      this.draft.loop[position] = step.msg !== undefined ? { msg: step.msg } : { cmd: step.cmd! };
-    } else {
-      this.draft.loop[position] = { ...step, onlyIfChanges: true };
-    }
-    this.dirty = true;
+    this.mutate(() => {
+      if (step.onlyIfChanges) {
+        this.draft.loop[position] = step.msg !== undefined ? { msg: step.msg } : { cmd: step.cmd! };
+      } else {
+        this.draft.loop[position] = { ...step, onlyIfChanges: true };
+      }
+    });
   }
 
   save(): void {
+    if (this.loadFailedIndex !== null) {
+      this.setFlash(`Workflow ${this.loadFailedIndex} has no tree step - fix workflow.json first`);
+      return;
+    }
     const config: WorkflowConfig = {
       rounds: this.draft.rounds,
       start: [...this.draft.start],
@@ -624,7 +656,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
     this.savedSnapshot = this.snapshot();
   }
 
-  private snapshot(): StoreSnapshot {
+  protected snapshot(): StoreSnapshot {
     return { draft: { ...this.draft }, keys: [...this.keys], selection: this.selection };
   }
   private restore(snap: StoreSnapshot): void {
@@ -693,39 +725,33 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
       return;
     }
     const key = this.keys[this.selection]!;
-    this.startInput(`content for ${this.noun.toLowerCase()} ${key} (current: ${truncate(this.draft[key]!, 30)}): `, (value) => {
-      const content = value.trim();
-      if (content.length < 5) return `${this.noun} must be at least 5 characters.`;
-      this.pushUndo(this.snapshot());
-      this.draft[key] = content;
-      this.dirty = true;
-      return null;
+    this.commitInput(`content for ${this.noun.toLowerCase()} ${key} (current: ${truncate(this.draft[key]!, 30)}): `, (value) => {
+      return value.length >= 5 ? null : `${this.noun} must be at least 5 characters.`;
+    }, (value) => {
+      this.draft[key] = value;
     });
   }
 
   private addEntry(): void {
     const key = this.nextKey();
-    this.startInput(`content for new ${this.noun.toLowerCase()} ${key}: `, (value) => {
-      const content = value.trim();
-      if (content.length < 5) return `${this.noun} must be at least 5 characters.`;
-      this.pushUndo(this.snapshot());
-      this.draft[key] = content;
+    this.commitInput(`content for new ${this.noun.toLowerCase()} ${key}: `, (value) => {
+      return value.length >= 5 ? null : `${this.noun} must be at least 5 characters.`;
+    }, (value) => {
+      this.draft[key] = value;
       this.keys.push(key);
       this.keys.sort(compareNumericKeys);
       this.selection = this.keys.indexOf(key);
-      this.dirty = true;
-      return null;
     });
   }
 
   private deleteSelected(): void {
     if (this.keys.length === 0) return;
-    this.pushUndo(this.snapshot());
-    const key = this.keys[this.selection]!;
-    delete this.draft[key];
-    this.keys.splice(this.selection, 1);
-    this.selection = Math.min(this.selection, Math.max(0, this.keys.length - 1));
-    this.dirty = true;
+    this.mutate(() => {
+      const key = this.keys[this.selection]!;
+      delete this.draft[key];
+      this.keys.splice(this.selection, 1);
+      this.selection = Math.min(this.selection, Math.max(0, this.keys.length - 1));
+    });
     this.setFlash("Deleted (press s to save)");
   }
 

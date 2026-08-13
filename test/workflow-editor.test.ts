@@ -151,6 +151,103 @@ describe("WorkflowTab", () => {
     expect(tab.dirty).toBe(false);
   });
 
+  it("repairs a misplaced tree step when loading", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 2, start: [], loop: [{ msg: "6" }, { tree: "1" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any, notify);
+    expect(tab.draft.tree).toBe("1");
+    expect(tab.draft.loop).toEqual([{ msg: "6" }]);
+    expect(tab.getAboveContentLine(80)[0]).toContain("moved to the start of the loop");
+  });
+
+  it("keeps additional tree steps when repairing a misplaced one", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 2, start: [], loop: [{ msg: "6" }, { tree: "1" }, { tree: "2" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any, notify);
+    expect(tab.draft.tree).toBe("1");
+    expect(tab.draft.loop).toEqual([{ msg: "6" }, { tree: "2" }]);
+    expect(tab.getAboveContentLine(80)[0]).toContain("moved to the start of the loop");
+  });
+
+  it("refuses to load a workflow without a tree step", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 2, start: [{ msg: "1" }], loop: [{ msg: "6" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any, notify);
+    expect(tab.draft.start).toEqual([]);
+    expect(tab.getAboveContentLine(80)[0]).toContain("no tree step");
+  });
+
+  it("repairs a misplaced tree step when switching workflows", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": WORKFLOW_JSON["1"], "2": { rounds: 2, start: [], loop: [{ msg: "6" }, { tree: "1" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    tab.handleInput("w");
+    type(tab, "2");
+    tab.handleInput("\r");
+    expect((tab as any).index).toBe("2");
+    expect(tab.draft.tree).toBe("1");
+    expect(tab.draft.loop).toEqual([{ msg: "6" }]);
+    expect(tab.getAboveContentLine(80)[0]).toContain("moved to the start of the loop");
+  });
+
+  it("keeps the current workflow when the target has no tree step", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": WORKFLOW_JSON["1"], "2": { rounds: 2, start: [], loop: [{ msg: "6" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    tab.handleInput("w");
+    type(tab, "2");
+    tab.handleInput("\r");
+    expect((tab as any).index).toBe("1");
+    expect(tab.draft.start).toEqual([{ msg: "1" }, { msg: "2" }, { msg: "3" }, { msg: "4" }, { msg: "5" }]);
+    expect(tab.getAboveContentLine(80)[0]).toContain("no tree step");
+  });
+
+  it("refuses to save when the workflow could not be loaded", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("defaults.json")) return JSON.stringify({ "workflow.json": "recorded", "messages.json": "recorded", "commands.json": "recorded" });
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 2, start: [{ msg: "1" }], loop: [{ msg: "6" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any, notify);
+    tab.save();
+    expect(writeFileSync).not.toHaveBeenCalled();
+    expect(tab.getAboveContentLine(80)[0]).toContain("no tree step");
+  });
+
+  it("allows saving again after switching to a loadable workflow", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("defaults.json")) return JSON.stringify({ "workflow.json": "recorded", "messages.json": "recorded", "commands.json": "recorded" });
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": WORKFLOW_JSON["1"], "2": { rounds: 2, start: [], loop: [{ msg: "6" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any, notify);
+    tab.handleInput("w");
+    type(tab, "2");
+    tab.handleInput("\r");
+    tab.save();
+    expect(writeFileSync).not.toHaveBeenCalled();
+    tab.handleInput("w");
+    type(tab, "1");
+    tab.handleInput("\r");
+    tab.save();
+    expect(writeFileSync).toHaveBeenCalled();
+  });
+
   it("edits the tree anchor index", () => {
     for (let i = 0; i < 5; i++) tab.handleInput("j");
     tab.handleInput("e");

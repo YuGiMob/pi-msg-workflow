@@ -124,7 +124,7 @@ function registerChangeCommand(
       if (!requireInteractive(ctx, `change-${name}`)) return;
       const trimmed = requireArg(ctx, args, `/change-${name} <number> <content>`);
       if (trimmed === null) return;
-      const match = trimmed.match(/^(\d+)\s+(?:"([^"]*)"|'([^']*)'|(.+))$/);
+      const match = trimmed.match(/^(\d+)\s+(?:"([^"]*)"|'([^']*)'|([^"'].*))$/);
       if (!match) {
         ctx.ui.notify(`Usage: /change-${name} <number> "<content>"`, "warning");
         return;
