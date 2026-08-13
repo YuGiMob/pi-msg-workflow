@@ -23,6 +23,7 @@ const OVERLAY_OPTIONS = {
 const SEND_START_TIMEOUT_MS = 5000;
 const SEND_MAX_ATTEMPTS = 3;
 const SEND_POLL_INTERVAL_MS = 25;
+const SEND_GRACE_PERIOD_MS = 2000;
 
 let workflowStopRequested = false;
 let workflowRunning = false;
@@ -290,7 +291,8 @@ async function sendAndWaitForTurn(
     } catch {
       return "failed";
     }
-    const deadline = Date.now() + SEND_START_TIMEOUT_MS;
+    let deadline = Date.now() + SEND_START_TIMEOUT_MS;
+    let graceUsed = false;
     while (Date.now() < deadline) {
       if (countUserTextMatches(ctx.sessionManager.getBranch(), text) > before) {
         await ctx.waitForIdle();
@@ -300,7 +302,10 @@ async function sendAndWaitForTurn(
       if (!ctx.isIdle()) {
         await ctx.waitForIdle();
         if (countUserTextMatches(ctx.sessionManager.getBranch(), text) > before) return "sent";
-        break;
+        if (!graceUsed) {
+          deadline = Date.now() + SEND_GRACE_PERIOD_MS;
+          graceUsed = true;
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, SEND_POLL_INTERVAL_MS));
     }

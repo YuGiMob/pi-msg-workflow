@@ -206,21 +206,24 @@ export function setWorkflowConfig(index: string, config: WorkflowConfig): void {
   writeJsonAtomic(WORKFLOW_FILE, sorted);
 }
 
-export function referencedIndices(config: WorkflowConfig): string[] {
-  const indices = config.start.flatMap((step) => (step.msg !== undefined ? [step.msg] : []));
-  indices.push(...config.finally.flatMap((step) => (step.msg !== undefined ? [step.msg] : [])));
-  for (const step of config.loop) {
-    if (step.tree !== undefined) indices.push(step.tree);
-    if (step.msg !== undefined) indices.push(step.msg);
+function collectStepRefs(config: WorkflowConfig, fields: ("msg" | "cmd" | "tree")[]): string[] {
+  const steps: LoopStep[] = [...config.start, ...config.finally, ...config.loop];
+  const indices: string[] = [];
+  for (const step of steps) {
+    for (const field of fields) {
+      const value = step[field];
+      if (value !== undefined) indices.push(value);
+    }
   }
   return [...new Set(indices)];
 }
 
+export function referencedIndices(config: WorkflowConfig): string[] {
+  return collectStepRefs(config, ["tree", "msg"]);
+}
+
 export function referencedCommands(config: WorkflowConfig): string[] {
-  const indices = config.start.flatMap((step) => (step.cmd !== undefined ? [step.cmd] : []));
-  indices.push(...config.finally.flatMap((step) => (step.cmd !== undefined ? [step.cmd] : [])));
-  indices.push(...config.loop.flatMap((step) => (step.cmd !== undefined ? [step.cmd] : [])));
-  return [...new Set(indices)];
+  return collectStepRefs(config, ["cmd"]);
 }
 
 export function missingReferences(

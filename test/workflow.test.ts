@@ -766,6 +766,72 @@ describe("workflow extension", () => {
       vi.useRealTimers();
     }
   });
+  it("does not re-send a message that is picked up shortly after the session becomes idle", async () => {
+    vi.useFakeTimers();
+    try {
+      holder.workflow = { "1": { rounds: 1, start: [], loop: [{ tree: "1" }, { msg: "6" }], finally: [] } };
+      let busy = false;
+      let releaseIdle: () => void = () => {};
+      const idleGate = new Promise<void>((resolve) => {
+        releaseIdle = resolve;
+      });
+      pi.sendUserMessage = vi.fn((content: string) => {
+        if (content === MSG6) {
+          busy = true;
+          setTimeout(() => {
+            const id = String(holder.branch.length);
+            holder.branch.push(userEntry(`u${id}`, content));
+            holder.branch.push(assistantEntry(`a${id}`));
+            busy = false;
+            holder.state.active = false;
+          }, 100);
+          return;
+        }
+        const id = String(holder.branch.length);
+        holder.branch.push(userEntry(`u${id}`, content));
+        holder.branch.push(assistantEntry(`a${id}`));
+        holder.state.active = true;
+      });
+      const ctx = createCtx(fullPhaseA(), {
+        isIdle: vi.fn(() => !busy),
+        waitForIdle: vi.fn(async () => {
+          holder.state.active = false;
+          if (busy) await idleGate;
+        }),
+      });
+      const handlerPromise = commands["workflow"].handler("", ctx);
+      await vi.advanceTimersByTimeAsync(50);
+      busy = false;
+      releaseIdle();
+      await vi.advanceTimersByTimeAsync(200);
+      await handlerPromise;
+      expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
+      expect(pi.sendUserMessage).toHaveBeenCalledWith(MSG6, { deliverAs: "followUp" });
+      expect(pi.sendUserMessage).not.toHaveBeenCalledWith(MSG7, { deliverAs: "followUp" });
+      expect(ctx.ui.notify).toHaveBeenCalledWith("Workflow 1 complete: 1 round", "info");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("retries when the message does not land within the grace period despite repeated busy cycles", async () => {
+    vi.useFakeTimers();
+    try {
+      holder.workflow = { "1": { rounds: 1, start: [], loop: [{ tree: "1" }, { msg: "6" }], finally: [] } };
+      pi.sendUserMessage = vi.fn(() => {});
+      const ctx = createCtx(fullPhaseA(), {
+        isIdle: vi.fn(() => false),
+        waitForIdle: vi.fn(async () => {}),
+      });
+      const handlerPromise = commands["workflow"].handler("", ctx);
+      await vi.advanceTimersByTimeAsync(7000);
+      await handlerPromise;
+      expect(pi.sendUserMessage).toHaveBeenCalledTimes(3);
+      expect(pi.sendUserMessage).toHaveBeenCalledWith(MSG6, { deliverAs: "followUp" });
+      expect(ctx.ui.notify).toHaveBeenCalledWith("Failed to send message 6", "error");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("reports failure when sending a message throws", async () => {
     pi.sendUserMessage = vi.fn(() => {
       throw new Error("boom");
