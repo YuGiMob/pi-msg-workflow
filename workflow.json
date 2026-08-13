@@ -1,21 +1,44 @@
 {
-  "rounds": 2,
-  "start": [
-    { "msg": "1" },
-    { "msg": "2" },
-    { "msg": "3" },
-    { "msg": "4" },
-    { "msg": "5" }
-  ],
-  "loop": [
-    { "tree": "1" },
-    { "cmd": "1" },
-    { "msg": "6" },
-    { "msg": "7" },
-    { "msg": "5", "onlyIfChanges": true },
-    { "cmd": "1" }
-  ],
-  "finally": [
-    { "msg": "8" }
-  ]
+  "1": {
+    "rounds": 2,
+    "start": [
+      { "msg": "1" },
+      { "msg": "2" },
+      { "msg": "3" },
+      { "msg": "4" },
+      { "msg": "5" }
+    ],
+    "loop": [
+      { "tree": "1" },
+      { "cmd": "1" },
+      { "msg": "6" },
+      { "msg": "7" },
+      { "msg": "5", "onlyIfChanges": true },
+      { "cmd": "1", "onlyIfChanges": true }
+    ],
+    "finally": [
+      { "msg": "8" }
+    ]
+  },
+  "2": {
+    "rounds": 2,
+    "start": [
+      { "msg": "9" },
+      { "msg": "10" },
+      { "msg": "11" },
+      { "msg": "12" },
+      { "msg": "13" }
+    ],
+    "loop": [
+      { "tree": "9" },
+      { "cmd": "1" },
+      { "msg": "14" },
+      { "msg": "15" },
+      { "msg": "16", "onlyIfChanges": true },
+      { "cmd": "1", "onlyIfChanges": true }
+    ],
+    "finally": [
+      { "msg": "17" }
+    ]
+  }
 }

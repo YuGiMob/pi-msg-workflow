@@ -70,17 +70,32 @@ const MESSAGES = { "1": MSG1, "2": MSG2, "3": MSG3, "4": MSG4, "5": MSG5, "6": M
 const COMMANDS = { "1": "git add ." };
 
 const WORKFLOW_JSON = {
-  rounds: 2,
-  start: [{ msg: "1" }, { msg: "2" }, { msg: "3" }, { msg: "4" }, { msg: "5" }],
-  loop: [
-    { tree: "1" },
-    { cmd: "1" },
-    { msg: "6" },
-    { msg: "7" },
-    { msg: "5", onlyIfChanges: true },
-    { cmd: "1" },
-  ],
-  finally: [{ msg: "8" }],
+  "1": {
+    rounds: 2,
+    start: [{ msg: "1" }, { msg: "2" }, { msg: "3" }, { msg: "4" }, { msg: "5" }],
+    loop: [
+      { tree: "1" },
+      { cmd: "1" },
+      { msg: "6" },
+      { msg: "7" },
+      { msg: "5", onlyIfChanges: true },
+      { cmd: "1", onlyIfChanges: true },
+    ],
+    finally: [{ msg: "8" }],
+  },
+  "2": {
+    rounds: 2,
+    start: [{ msg: "9" }, { msg: "10" }, { msg: "11" }, { msg: "12" }, { msg: "13" }],
+    loop: [
+      { tree: "9" },
+      { cmd: "1" },
+      { msg: "14" },
+      { msg: "15" },
+      { msg: "16", onlyIfChanges: true },
+      { cmd: "1", onlyIfChanges: true },
+    ],
+    finally: [{ msg: "17" }],
+  },
 };
 
 function type(tab: { handleInput(data: string): boolean }, text: string): void {
@@ -130,7 +145,7 @@ describe("WorkflowTab", () => {
       { msg: "6" },
       { msg: "7" },
       { msg: "5", onlyIfChanges: true },
-      { cmd: "1" },
+      { cmd: "1", onlyIfChanges: true },
     ]);
     expect(tab.draft.finally).toEqual([{ msg: "8" }]);
     expect(tab.dirty).toBe(false);
@@ -244,7 +259,7 @@ describe("WorkflowTab", () => {
     tab.handleInput("\r");
     tab.save();
     const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
-    expect(written.start[written.start.length - 1]).toEqual({ cmd: "2" });
+    expect(written["1"].start[written["1"].start.length - 1]).toEqual({ cmd: "2" });
   });
 
   it("adds a finally step", () => {
@@ -287,7 +302,7 @@ describe("WorkflowTab", () => {
     for (let i = 0; i < 11; i++) tab.handleInput("j");
     tab.handleInput("t");
     expect(tab.draft.finally[0]).toEqual({ msg: "8" });
-    expect(tab.getAboveContentLine(80)[0]).toContain("if-changes applies to loop msg steps");
+    expect(tab.getAboveContentLine(80)[0]).toContain("if-changes applies to loop msg and cmd steps");
   });
 
   it("saves finally steps to workflow.json", () => {
@@ -304,7 +319,7 @@ describe("WorkflowTab", () => {
     tab.handleInput("\r");
     tab.save();
     const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
-    expect(written.finally[written.finally.length - 1]).toEqual({ cmd: "2" });
+    expect(written["1"].finally[written["1"].finally.length - 1]).toEqual({ cmd: "2" });
   });
 
   it("rejects an invalid added step", () => {
@@ -364,11 +379,12 @@ describe("WorkflowTab", () => {
     expect(tab.draft.loop[1]).toEqual({ msg: "6" });
   });
 
-  it("refuses if-changes on a cmd step", () => {
+  it("toggles if-changes on a cmd step", () => {
     for (let i = 0; i < 6; i++) tab.handleInput("j");
     tab.handleInput("t");
+    expect(tab.draft.loop[0]).toEqual({ cmd: "1", onlyIfChanges: true });
+    tab.handleInput("t");
     expect(tab.draft.loop[0]).toEqual({ cmd: "1" });
-    expect(tab.getAboveContentLine(80)[0]).toContain("if-changes applies to loop msg steps");
   });
 
   it("adjusts and clamps rounds", () => {
@@ -389,10 +405,11 @@ describe("WorkflowTab", () => {
     expect(writeFileSync).toHaveBeenCalledWith(expect.stringContaining("workflow.json.tmp"), expect.any(String), "utf8");
     expect(renameSync).toHaveBeenCalledWith(expect.stringContaining("workflow.json.tmp"), expect.stringContaining("workflow.json"));
     const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
-    expect(written.rounds).toBe(2);
-    expect(written.loop[0]).toEqual({ tree: "2" });
-    expect(written.loop[1]).toEqual({ cmd: "1" });
-    expect(written.finally).toEqual([{ msg: "8" }]);
+    expect(written["1"].rounds).toBe(2);
+    expect(written["1"].loop[0]).toEqual({ tree: "2" });
+    expect(written["1"].loop[1]).toEqual({ cmd: "1" });
+    expect(written["1"].finally).toEqual([{ msg: "8" }]);
+    expect(written["2"]).toEqual(WORKFLOW_JSON["2"]);
     expect(tab.dirty).toBe(false);
     expect(notify).toHaveBeenCalledWith("workflow.json saved", "info");
   });
@@ -514,11 +531,12 @@ describe("WorkflowTab", () => {
     expect(tab.dirty).toBe(true);
   });
   it("renders rows with previews", () => {
-    const lines = tab.render(78, 12);
+    const lines = tab.render(78, 20);
     expect(lines[0]).toContain("Rounds: 2");
     expect(lines.join("\n")).toContain("tree → 1");
     expect(lines.join("\n")).toContain("msg 6");
     expect(lines.join("\n")).toContain("cmd 1: git add .");
+    expect(lines.join("\n")).toContain("cmd 1 [if-changes]: git add .");
   });
 
   it("renders the finally section", () => {
@@ -555,6 +573,63 @@ describe("WorkflowTab", () => {
     } finally {
       vi.mocked(visibleWidth).mockImplementation((s: string) => s.length);
     }
+  });
+
+  it("switches to another workflow with w", () => {
+    tab.handleInput("w");
+    type(tab, "2");
+    tab.handleInput("\r");
+    expect((tab as any).index).toBe("2");
+    expect(tab.name).toBe("Workflow 2");
+    expect(tab.draft.start).toEqual([{ msg: "9" }, { msg: "10" }, { msg: "11" }, { msg: "12" }, { msg: "13" }]);
+    expect(tab.draft.tree).toBe("9");
+    expect(tab.draft.loop[0]).toEqual({ cmd: "1" });
+    expect(tab.draft.finally).toEqual([{ msg: "17" }]);
+    expect(tab.dirty).toBe(false);
+  });
+
+  it("creates a new workflow by switching to an unused number", () => {
+    tab.handleInput("w");
+    type(tab, "7");
+    tab.handleInput("\r");
+    expect((tab as any).index).toBe("7");
+    expect(tab.draft.start).toEqual([{ msg: "1" }, { msg: "2" }, { msg: "3" }, { msg: "4" }, { msg: "5" }]);
+    expect(tab.draft.loop[0]).toEqual({ cmd: "1" });
+    expect(tab.draft.tree).toBe("1");
+    expect(tab.getAboveContentLine(80)[0]).toContain("press s to create it");
+  });
+
+  it("rejects a non-numeric workflow number", () => {
+    tab.handleInput("w");
+    type(tab, "x");
+    tab.handleInput("\r");
+    expect((tab as any).index).toBe("1");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Workflow number must be a number");
+  });
+
+  it("refuses to switch workflows with unsaved changes", () => {
+    tab.handleInput("e");
+    type(tab, "9");
+    tab.handleInput("\r");
+    tab.handleInput("w");
+    expect((tab as any).index).toBe("1");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Save or undo your changes before switching workflows");
+  });
+
+  it("saves a new workflow without touching the others", () => {
+    tab.handleInput("w");
+    type(tab, "7");
+    tab.handleInput("\r");
+    tab.handleInput("a");
+    type(tab, "msg 4");
+    tab.handleInput("\r");
+    tab.save();
+    const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
+    expect(written["7"].start[written["7"].start.length - 1]).toEqual({ msg: "4" });
+    expect(written["7"].loop[0]).toEqual({ tree: "1" });
+    expect(written["7"].rounds).toBe(2);
+    expect(written["1"]).toEqual(WORKFLOW_JSON["1"]);
+    expect(written["2"]).toEqual(WORKFLOW_JSON["2"]);
   });
 });
 
@@ -815,7 +890,50 @@ describe("MessagesTab", () => {
     tab.handleInput("j");
     tab.handleInput("j");
     const lines = tab.render(40, 6);
-    expect(lines.join("\n")).toContain("3: tail");
+    expect(lines.join("\n")).toContain("3*: tail");
+  });
+
+  it("marks entries referenced by the workflow", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ rounds: 1, start: [{ msg: "1" }], loop: [{ tree: "3" }], finally: [] });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new MessagesTab(theme as any, notify);
+    const content = tab.render(80, 12).join("\n");
+    expect(content).toContain("1*: ");
+    expect(content).toContain("3*: ");
+    expect(content).toContain(" 2: ");
+    expect(content).toContain(" * = referenced by the workflow");
+  });
+
+  it("marks entries referenced by any workflow", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("defaults.json")) return JSON.stringify({ "workflow.json": "recorded", "messages.json": "recorded", "commands.json": "recorded" });
+      if (String(path).includes("workflow.json")) return JSON.stringify(WORKFLOW_JSON);
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify({ ...MESSAGES, "9": "nine", "10": "ten", "11": "eleven", "12": "twelve", "13": "thirteen", "14": "fourteen", "15": "fifteen", "16": "sixteen", "17": "seventeen" });
+    });
+    const tab = new MessagesTab(theme as any, notify);
+    for (let i = 0; i < 16; i++) tab.handleInput("j");
+    const content = tab.render(80, 12).join("\n");
+    expect(content).toContain("9*: ");
+    expect(content).toContain("17*: ");
+  });
+
+  it("refuses to delete a message referenced by another workflow", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("defaults.json")) return JSON.stringify({ "workflow.json": "recorded", "messages.json": "recorded", "commands.json": "recorded" });
+      if (String(path).includes("workflow.json")) return JSON.stringify(WORKFLOW_JSON);
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify({ ...MESSAGES, "9": "nine", "10": "ten", "11": "eleven", "12": "twelve", "13": "thirteen", "14": "fourteen", "15": "fifteen", "16": "sixteen", "17": "seventeen" });
+    });
+    const tab = new MessagesTab(theme as any, notify);
+    for (let i = 0; i < 8; i++) tab.handleInput("j");
+    tab.handleInput("x");
+    tab.save();
+    expect(writeFileSync).not.toHaveBeenCalled();
+    expect(tab.getAboveContentLine(80)[0]).toContain("Messages still used by the workflow: 9");
   });
 });
 
@@ -933,7 +1051,7 @@ describe("WorkflowEditorOverlay", () => {
     const lines = overlay.render(80);
     expect(lines[0]).toContain("╭");
     expect(lines[lines.length - 1]).toContain("╰");
-    expect(lines[2]).toContain("[Workflow]");
+    expect(lines[2]).toContain("[Workflow 1]");
     expect(lines[2]).toContain("[Messages]");
     expect(lines[2]).toContain("[Commands]");
   });
@@ -1028,7 +1146,7 @@ describe("WorkflowEditorOverlay", () => {
     workflowTab.handleInput("9");
     workflowTab.handleInput("\r");
     const lines = overlay.render(80);
-    expect(lines[2]).toContain("[Workflow*]");
+    expect(lines[2]).toContain("[Workflow 1*]");
   });
 
   it("lets the active tab consume keys first", () => {

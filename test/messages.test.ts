@@ -124,6 +124,16 @@ describe("messages extension", () => {
       expect(ctx.ui.notify).toHaveBeenCalledWith("Message 3 updated", "info");
     });
 
+    it("accepts single-quoted content", async () => {
+      const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
+      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
+
+      await cmd.cmd.handler("3 'New test message'", ctx);
+
+      expect(writeFileSync).toHaveBeenCalled();
+      expect(ctx.ui.notify).toHaveBeenCalledWith("Message 3 updated", "info");
+    });
+
     it("writes atomically via a tmp file and rename", async () => {
       const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
       const ctx = { hasUI: true, ui: { notify: vi.fn() } };

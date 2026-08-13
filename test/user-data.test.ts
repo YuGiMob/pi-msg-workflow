@@ -13,7 +13,7 @@ vi.mock("node:fs", () => ({
   mkdirSync: vi.fn(),
 }));
 
-import { ensureUserData, userDataDir, userDataPath } from "../src/user-data.js";
+import { ensureUserData, resetUserData, userDataDir, userDataPath } from "../src/user-data.js";
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -120,6 +120,25 @@ describe("user-data", () => {
     ensureUserData("workflow.json");
     expect(copyFileSync).not.toHaveBeenCalled();
     expect(mkdirSync).not.toHaveBeenCalled();
+    expect(writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it("resetUserData copies the packaged default and records its checksum", () => {
+    addPackageFile("workflow.json", "default");
+    addUserFile("workflow.json", "customized");
+    expect(resetUserData("workflow.json")).toBe(true);
+    expect(copyFileSync).toHaveBeenCalledWith(join(PACKAGE_ROOT, "workflow.json"), userDataPath("workflow.json"));
+    expect(writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining("defaults.json.tmp"),
+      expect.stringContaining(sha256("default")),
+      "utf-8",
+    );
+  });
+
+  it("resetUserData reports failure when the packaged default is missing", () => {
+    addUserFile("workflow.json", "customized");
+    expect(resetUserData("workflow.json")).toBe(false);
+    expect(copyFileSync).not.toHaveBeenCalled();
     expect(writeFileSync).not.toHaveBeenCalled();
   });
 });

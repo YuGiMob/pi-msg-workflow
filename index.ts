@@ -4,7 +4,9 @@ import { getMessages, setMessages } from "./src/messages.js";
 import { getCommands, setCommands } from "./src/commands.js";
 import { MAX_ROUNDS } from "./src/constants.js";
 import { runCommand, commandFailureMessage } from "./src/command-runner.js";
-import { getWorkflowConfig, referencedIndices, referencedCommands, type StartStep } from "./src/workflow-config.js";
+import { getWorkflowConfig, missingReferences, type StartStep, type LoopStep } from "./src/workflow-config.js";
+import { resetUserData } from "./src/user-data.js";
+import { countLeadingPhaseMatches, findAnchorAfterMessage, countUserTextMatches } from "./src/session-helpers.js";
 import { WorkflowEditorOverlay, WorkflowTab, MessagesTab, CommandsTab, MAX_OVERLAY_HEIGHT_RATIO, type EditorTab } from "./src/workflow-editor.js";
 
 const OVERLAY_OPTIONS = {
@@ -24,10 +26,26 @@ const SEND_POLL_INTERVAL_MS = 25;
 let workflowStopRequested = false;
 let workflowRunning = false;
 
+function clip(text: string | undefined, max: number): string {
+  if (text === undefined) return "(missing)";
+  return text.length > max ? `${text.substring(0, max)}...` : text;
+}
+
+function describeStep(step: LoopStep, messages: Record<string, string>, commands: Record<string, string>): string {
+  if (step.msg !== undefined) {
+    const suffix = "onlyIfChanges" in step && step.onlyIfChanges ? " (if-changes)" : "";
+    return `msg ${step.msg}${suffix}: ${clip(messages[step.msg], 50)}`;
+  }
+  if (step.cmd !== undefined) {
+    const suffix = "onlyIfChanges" in step && step.onlyIfChanges ? " (if-changes)" : "";
+    return `cmd ${step.cmd}${suffix}: ${clip(commands[step.cmd], 50)}`;
+  }
+  return `tree ${step.tree!}`;
+}
 function storeCompletions(store: Record<string, string>, noun: string, prefix: string): AutocompleteItem[] {
   const items = Object.keys(store).map((num) => ({
     value: num,
-    label: `${noun} ${num}: ${store[num].substring(0, 50)}${store[num].length > 50 ? '...' : ''}`,
+    label: `${noun} ${num}: ${clip(store[num], 50)}`,
   }));
   const filtered = items.filter((i) => i.value.startsWith(prefix));
   return filtered.length > 0 ? filtered : [];
@@ -153,7 +171,7 @@ function registerShowCommand(
           ctx.ui.notify(`No ${noun.toLowerCase()}s defined.`, "info");
           return;
         }
-        const list = keys.map((k) => `  ${k}: ${store[k].substring(0, 200)}${store[k].length > 200 ? "..." : ""}`).join("\n");
+        const list = keys.map((k) => `  ${k}: ${clip(store[k], 200)}`).join("\n");
         ctx.ui.notify(`${noun}s:\n${list}`, "info");
         return;
       }
@@ -173,6 +191,17 @@ function parseRounds(args: string, fallback: number): number {
   const value = Number.parseInt(trimmed, 10);
   if (value < 1) return fallback;
   return Math.min(value, MAX_ROUNDS);
+}
+async function checkForChanges(pi: ExtensionAPI, ctx: ExtensionCommandContext, round: number, rounds: number): Promise<boolean | null> {
+  ctx.ui.setWorkingMessage(`Round ${round}/${rounds}: checking for changes...`);
+  const statusResult = await pi.exec("git", ["status", "--porcelain"]);
+  if (statusResult.code !== 0) {
+    ctx.ui.notify(`git status --porcelain failed: ${statusResult.stderr}`, "error");
+    return null;
+  }
+  const changed = statusResult.stdout.trim().length > 0;
+  if (!changed) ctx.ui.notify(`Round ${round}/${rounds}: no changes detected, skipping step`, "info");
+  return changed;
 }
 
 async function runStoredCommand(
@@ -198,9 +227,13 @@ async function sendStoredMessage(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
   num: string,
-  text: string,
   workingText: string,
 ): Promise<boolean> {
+  const text = getMessages()[num];
+  if (text === undefined) {
+    ctx.ui.notify(`Message ${num} does not exist.`, "error");
+    return false;
+  }
   ctx.ui.setWorkingMessage(workingText);
   const result = await sendAndWaitForTurn(pi, ctx, text);
   if (result === "cancelled") {
@@ -218,7 +251,6 @@ async function runOncePhase(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
   steps: StartStep[],
-  messages: Record<string, string>,
   skipMsgs: number,
 ): Promise<boolean> {
   let skipped = 0;
@@ -232,7 +264,7 @@ async function runOncePhase(
         skipped++;
         continue;
       }
-      if (!(await sendStoredMessage(pi, ctx, step.msg, messages[step.msg]!, `Sending message ${step.msg}...`))) return false;
+      if (!(await sendStoredMessage(pi, ctx, step.msg, `Sending message ${step.msg}...`))) return false;
     } else if (step.cmd !== undefined) {
       if (!(await runStoredCommand(pi, ctx, step.cmd, "Running "))) return false;
     }
@@ -240,74 +272,6 @@ async function runOncePhase(
   return true;
 }
 
-interface TextBlock {
-  type?: string;
-  text?: string;
-}
-
-function userMessageText(entry: SessionEntry): string | undefined {
-  if (entry.type !== "message" || entry.message.role !== "user") return undefined;
-  const content = entry.message.content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return (content as TextBlock[])
-      .filter((block) => block?.type === "text")
-      .map((block) => block.text ?? "")
-      .join("");
-  }
-  return undefined;
-}
-
-function countLeadingPhaseMatches(entries: SessionEntry[], expected: string[]): number {
-  let matched = 0;
-  for (const entry of entries) {
-    const text = userMessageText(entry);
-    if (text === undefined) continue;
-    if (matched < expected.length && text === expected[matched]) {
-      matched++;
-    } else {
-      break;
-    }
-  }
-  return matched;
-}
-function findAnchorAfterMessage(entries: SessionEntry[], messageText: string): SessionEntry | undefined {
-  let firstUserIndex = -1;
-  const messageIndices: number[] = [];
-  for (let i = 0; i < entries.length; i++) {
-    const text = userMessageText(entries[i]);
-    if (text === undefined) continue;
-    if (firstUserIndex === -1) firstUserIndex = i;
-    if (text === messageText) messageIndices.push(i);
-  }
-  for (let i = messageIndices.length - 1; i >= 0; i--) {
-    const anchorIndex = messageIndices[i]!;
-    let nextUserIndex = -1;
-    for (let j = anchorIndex + 1; j < entries.length; j++) {
-      if (userMessageText(entries[j]) !== undefined) {
-        nextUserIndex = j;
-        break;
-      }
-    }
-    if (nextUserIndex === -1) {
-      const last = entries[entries.length - 1];
-      if (last !== undefined && userMessageText(last) === undefined) return last;
-      continue;
-    }
-    if (nextUserIndex > anchorIndex + 1) return entries[nextUserIndex - 1];
-  }
-  if (firstUserIndex === -1) return undefined;
-  for (let i = firstUserIndex + 1; i < entries.length; i++) {
-    if (userMessageText(entries[i]) !== undefined) {
-      return entries[i - 1];
-    }
-  }
-  return undefined;
-}
-
-function countUserTextMatches(entries: SessionEntry[], text: string): number {
-  return entries.filter((entry) => userMessageText(entry) === text).length;
-}
 
 type SendResult = "sent" | "failed" | "cancelled";
 
@@ -337,16 +301,18 @@ async function sendAndWaitForTurn(
   return "failed";
 }
 
-type TreeNavigationStatus = "ok" | "missing" | "not-found" | "cancelled";
+type TreeNavigationStatus = "ok" | "missing" | "not-found" | "cancelled" | "fallback";
 
 async function navigateToMessageAnchor(ctx: ExtensionCommandContext, index: string, requirePresence = false): Promise<TreeNavigationStatus> {
   const text = getMessages()[index];
   if (!text) return "missing";
-  if (requirePresence && countUserTextMatches(ctx.sessionManager.getBranch(), text) === 0) return "not-found";
+  const present = countUserTextMatches(ctx.sessionManager.getBranch(), text) > 0;
+  if (requirePresence && !present) return "not-found";
   const anchor = findAnchorAfterMessage(ctx.sessionManager.getBranch(), text);
   if (!anchor) return "not-found";
   const navigation = await ctx.navigateTree(anchor.id, { summarize: false });
-  return navigation.cancelled ? "cancelled" : "ok";
+  if (navigation.cancelled) return "cancelled";
+  return present ? "ok" : "fallback";
 }
 
 function notifyNavigationStatus(
@@ -368,6 +334,10 @@ function notifyNavigationStatus(
     ctx.ui.notify(cancelledText, "warning");
     return false;
   }
+  if (status === "fallback") {
+    ctx.ui.notify(`Message ${index} is not in the session - context reset to the response of the first user message instead`, "warning");
+    return true;
+  }
   return true;
 }
 
@@ -387,7 +357,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerCommand("workflow-edit", {
     description:
-      "Open an interactive editor for the workflow definition and the message/command stores (workflow.json / messages.json / commands.json)",
+      "Open an interactive editor for the workflows and the message/command stores (workflow.json / messages.json / commands.json)",
     handler: async (_args, ctx: ExtensionCommandContext) => {
       if (!ctx.hasUI) {
         ctx.ui.notify("/workflow-edit requires interactive mode", "error");
@@ -446,9 +416,24 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("workflow-reset", {
+    description: "Reset workflow.json to the packaged default workflows",
+    handler: async (_args, ctx: ExtensionCommandContext) => {
+      if (!ctx.hasUI) {
+        ctx.ui.notify("/workflow-reset requires interactive mode", "error");
+        return;
+      }
+      if (resetUserData("workflow.json")) {
+        ctx.ui.notify("workflow.json reset to the default workflows", "info");
+      } else {
+        ctx.ui.notify("Could not reset workflow.json", "error");
+      }
+    },
+  });
+
   pi.registerCommand("workflow", {
     description:
-      "Run the configured improvement workflow: start messages, then review rounds of tree reset, stored commands and messages (see workflow.json)",
+      "Run a numbered workflow (default 1): start messages, then review rounds of tree reset, stored commands and messages (see workflow.json)",
     handler: async (args, ctx: ExtensionCommandContext) => {
       if (!ctx.hasUI) {
         ctx.ui.notify("/workflow requires interactive mode", "error");
@@ -460,16 +445,21 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("A workflow is already running - use /workflow-stop to cancel it", "warning");
         return;
       }
-      const messages = getMessages();
-      const { config, errors } = getWorkflowConfig();
+      const numeric = tokens.filter((token) => /^\d+$/.test(token));
+      const index = numeric[0] ?? "1";
+      const { config, errors, exists } = getWorkflowConfig(index);
+      if (!exists) {
+        ctx.ui.notify(`Workflow ${index} does not exist. Use /workflow-edit and press w to create it.`, "error");
+        return;
+      }
       notifyConfigErrors(ctx, errors);
-      const missing = referencedIndices(config).filter((num) => !messages[num]);
+      const messages = getMessages();
+      const commands = getCommands();
+      const { messages: missing, commands: missingCommands } = missingReferences(config, messages, commands);
       if (missing.length > 0) {
         ctx.ui.notify(`Missing messages in messages.json: ${missing.join(", ")}`, "error");
         return;
       }
-      const commands = getCommands();
-      const missingCommands = referencedCommands(config).filter((num) => !commands[num]);
       if (missingCommands.length > 0) {
         ctx.ui.notify(`Missing commands in commands.json: ${missingCommands.join(", ")}`, "error");
         return;
@@ -478,22 +468,16 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify("The first step of the loop must be a tree step (context reset)", "error");
         return;
       }
-      const rounds = parseRounds(tokens.find((token) => /^\d+$/.test(token)) ?? "", config.rounds);
+      const rounds = numeric[1] === undefined ? config.rounds : parseRounds(numeric[1], config.rounds);
       if (dryRun) {
         const startText = config.start.length > 0
-          ? config.start.map((step) => (step.msg !== undefined ? `msg ${step.msg}` : `cmd ${step.cmd}`)).join(", ")
+          ? config.start.map((step) => describeStep(step, messages, commands)).join(", ")
           : "(none)";
-        const loopText = config.loop
-          .map((step) => {
-            if (step.tree !== undefined) return `tree ${step.tree}`;
-            if (step.cmd !== undefined) return `cmd ${step.cmd}`;
-            return `msg ${step.msg}${step.onlyIfChanges ? " (if-changes)" : ""}`;
-          })
-          .join(", ");
+        const loopText = config.loop.map((step) => describeStep(step, messages, commands)).join(", ");
         const finallyText = config.finally.length > 0
-          ? config.finally.map((step) => (step.msg !== undefined ? `msg ${step.msg}` : `cmd ${step.cmd}`)).join(", ")
+          ? config.finally.map((step) => describeStep(step, messages, commands)).join(", ")
           : "(none)";
-        ctx.ui.notify(`[pi-msg-workflow] Dry run: ${rounds} round${rounds === 1 ? "" : "s"}\nstart: ${startText}\nloop: ${loopText}\nfinally: ${finallyText}`, "info");
+        ctx.ui.notify(`[pi-msg-workflow] Dry run: Workflow ${index}, ${rounds} round${rounds === 1 ? "" : "s"}\nstart: ${startText}\nloop: ${loopText}\nfinally: ${finallyText}`, "info");
         return;
       }
       workflowRunning = true;
@@ -503,7 +487,7 @@ export default function (pi: ExtensionAPI) {
         await ctx.waitForIdle();
         const startMsgs = config.start.flatMap((step) => (step.msg !== undefined ? [messages[step.msg]!] : []));
         const matched = countLeadingPhaseMatches(ctx.sessionManager.getBranch(), startMsgs);
-        if (!(await runOncePhase(pi, ctx, config.start, messages, matched))) return;
+        if (!(await runOncePhase(pi, ctx, config.start, matched))) return;
         for (let round = 1; round <= rounds; round++) {
           for (const step of config.loop) {
             if (workflowStopRequested) {
@@ -514,27 +498,22 @@ export default function (pi: ExtensionAPI) {
               ctx.ui.setWorkingMessage(`Round ${round}/${rounds}: resetting context to message ${step.tree}...`);
               const status = await navigateToMessageAnchor(ctx, step.tree);
               if (!notifyNavigationStatus(ctx, step.tree, status, "Workflow cancelled", "error")) return;
-            } else if (step.cmd !== undefined) {
+              continue;
+            }
+            if (step.onlyIfChanges) {
+              const changed = await checkForChanges(pi, ctx, round, rounds);
+              if (changed === null) return;
+              if (!changed) continue;
+            }
+            if (step.cmd !== undefined) {
               if (!(await runStoredCommand(pi, ctx, step.cmd, `Round ${round}/${rounds}: running `))) return;
             } else if (step.msg !== undefined) {
-              if (step.onlyIfChanges) {
-                ctx.ui.setWorkingMessage(`Round ${round}/${rounds}: checking for changes...`);
-                const statusResult = await pi.exec("git", ["status", "--porcelain"]);
-                if (statusResult.code !== 0) {
-                  ctx.ui.notify(`git status --porcelain failed: ${statusResult.stderr}`, "error");
-                  return;
-                }
-                if (!statusResult.stdout.trim()) {
-                  ctx.ui.notify(`Round ${round}/${rounds}: no changes detected, skipping message ${step.msg}`, "info");
-                  continue;
-                }
-              }
-              if (!(await sendStoredMessage(pi, ctx, step.msg, messages[step.msg]!, `Round ${round}/${rounds}: sending message ${step.msg}...`))) return;
+              if (!(await sendStoredMessage(pi, ctx, step.msg, `Round ${round}/${rounds}: sending message ${step.msg}...`))) return;
             }
           }
         }
-        if (!(await runOncePhase(pi, ctx, config.finally, messages, 0))) return;
-        ctx.ui.notify(`Workflow complete: ${rounds} round${rounds === 1 ? "" : "s"}`, "info");
+        if (!(await runOncePhase(pi, ctx, config.finally, 0))) return;
+        ctx.ui.notify(`Workflow ${index} complete: ${rounds} round${rounds === 1 ? "" : "s"}`, "info");
       } finally {
         workflowRunning = false;
         ctx.ui.setWorkingMessage();

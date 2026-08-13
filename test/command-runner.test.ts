@@ -63,4 +63,12 @@ describe("commandFailureMessage", () => {
   it("reports failures with stderr", () => {
     expect(commandFailureMessage("1", { ok: false, reason: "failed", stderr: "boom" })).toBe("Command 1 failed: boom");
   });
+
+  it("falls back to stdout when stderr is empty", () => {
+    expect(commandFailureMessage("1", { ok: false, reason: "failed", stderr: "", stdout: "boom" })).toBe("Command 1 failed: boom");
+  });
+
+  it("reports when there is no error output", () => {
+    expect(commandFailureMessage("1", { ok: false, reason: "failed", stderr: "" })).toBe("Command 1 failed with no error output");
+  });
 });

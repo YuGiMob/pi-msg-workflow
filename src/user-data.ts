@@ -76,3 +76,17 @@ export function ensureUserData(fileName: string): void {
     console.error(`Failed to sync user data for ${fileName}:`, err);
   }
 }
+
+export function resetUserData(fileName: string): boolean {
+  try {
+    const packageFile = join(PACKAGE_ROOT, fileName);
+    if (!existsSync(packageFile)) return false;
+    mkdirSync(userDataDir(), { recursive: true });
+    copyFileSync(packageFile, userDataPath(fileName));
+    setDefaultChecksum(fileName, checksumFile(packageFile));
+    return true;
+  } catch (err) {
+    console.error(`Failed to reset user data for ${fileName}:`, err);
+    return false;
+  }
+}

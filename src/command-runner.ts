@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-export type CommandResult = { ok: true } | { ok: false; reason: "empty" | "unterminated" | "failed"; stderr: string };
+export type CommandResult = { ok: true } | { ok: false; reason: "empty" | "unterminated" | "failed"; stderr: string; stdout?: string };
 
 export function splitCommand(command: string): string[] | null {
   const parts: string[] = [];
@@ -45,11 +45,12 @@ export function splitCommand(command: string): string[] | null {
   if (started) parts.push(current);
   return parts;
 }
-
 export function commandFailureMessage(num: string, result: Extract<CommandResult, { ok: false }>): string {
   if (result.reason === "empty") return `Command ${num} is empty.`;
   if (result.reason === "unterminated") return `Command ${num} has an unterminated quote.`;
-  return `Command ${num} failed: ${result.stderr}`;
+  if (result.stderr.trim() !== "") return `Command ${num} failed: ${result.stderr}`;
+  if (result.stdout !== undefined && result.stdout.trim() !== "") return `Command ${num} failed: ${result.stdout}`;
+  return `Command ${num} failed with no error output`;
 }
 
 export async function runCommand(
@@ -64,7 +65,7 @@ export async function runCommand(
   ui.setWorkingMessage(workingText);
   try {
     const result = await pi.exec(parts[0]!, parts.slice(1));
-    if (result.code !== 0) return { ok: false, reason: "failed", stderr: result.stderr };
+    if (result.code !== 0) return { ok: false, reason: "failed", stderr: result.stderr, stdout: result.stdout };
     return { ok: true };
   } catch (err) {
     return { ok: false, reason: "failed", stderr: err instanceof Error ? err.message : String(err) };

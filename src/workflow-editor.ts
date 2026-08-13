@@ -3,7 +3,7 @@ import { Key, decodeKittyPrintable, matchesKey, visibleWidth, type OverlayHandle
 import { getMessages, setMessages } from "./messages.js";
 import { getCommands, setCommands } from "./commands.js";
 import { MAX_ROUNDS } from "./constants.js";
-import { getWorkflowConfig, setWorkflowConfig, referencedIndices, referencedCommands, type LoopStep, type WorkflowConfig } from "./workflow-config.js";
+import { getWorkflows, getWorkflowConfig, setWorkflowConfig, missingReferences, referencedIndices, referencedCommands, type LoopStep, type WorkflowConfig } from "./workflow-config.js";
 
 export interface EditorTab {
   readonly name: string;
@@ -144,6 +144,10 @@ abstract class BaseEditorTab implements EditorTab {
     return this.undoStack.pop();
   }
 
+  protected clearUndo(): void {
+    this.undoStack = [];
+  }
+
   protected startInput(prompt: string, commit: (value: string) => string | null): void {
     this.input = { prompt, buffer: "", cursor: 0, commit };
   }
@@ -233,23 +237,50 @@ type WorkflowSnapshot = WorkflowDraft & { selection: number };
 type SelectableKind = "start" | "tree" | "loop" | "finally";
 
 export class WorkflowTab extends BaseEditorTab implements EditorTab {
-  readonly name = "Workflow";
-  readonly footerHints = "j/k sel · e edit · a add · x del · J/K move · t if-chg · [ ] rnds · u undo · s save";
+  private index = "1";
+  readonly footerHints = "j/k sel · e edit · a add · x del · J/K move · t if-chg · [ ] rnds · w switch · u undo · s save";
   readonly draft: WorkflowDraft;
   private selection = 0;
   private savedSnapshot: WorkflowSnapshot;
 
-  constructor(private readonly theme: Theme, private readonly notify: Notify) {
+  get name(): string {
+    return `Workflow ${this.index}`;
+  }
+
+  constructor(private readonly theme: Theme, private readonly notify: Notify, index = "1") {
     super();
-    const { config } = getWorkflowConfig();
-    this.draft = {
-      rounds: config.rounds,
-      start: config.start.map((step) => ({ ...step })),
-      tree: config.loop[0]?.tree ?? "1",
-      loop: config.loop.slice(1).map((step) => ({ ...step })),
-      finally: config.finally.map((step) => ({ ...step })),
-    };
+    this.draft = { rounds: 2, start: [], tree: "1", loop: [], finally: [] };
+    this.loadWorkflow(index);
     this.savedSnapshot = this.snapshot();
+  }
+
+  private loadWorkflow(index: string): void {
+    this.index = index;
+    const { config } = getWorkflowConfig(index);
+    this.draft.rounds = config.rounds;
+    this.draft.start = config.start.map((step) => ({ ...step }));
+    this.draft.tree = config.loop[0]?.tree ?? "1";
+    this.draft.loop = config.loop.slice(1).map((step) => ({ ...step }));
+    this.draft.finally = config.finally.map((step) => ({ ...step }));
+    this.selection = 0;
+    this.savedSnapshot = this.snapshot();
+    this.dirty = false;
+    this.clearUndo();
+  }
+
+  private switchWorkflow(): void {
+    if (this.dirty) {
+      this.setFlash("Save or undo your changes before switching workflows");
+      return;
+    }
+    this.startInput(`workflow number (current: ${this.index}): `, (value) => {
+      const index = value.trim();
+      if (!/^\d+$/.test(index)) return "Workflow number must be a number.";
+      const { exists } = getWorkflowConfig(index);
+      this.loadWorkflow(index);
+      this.setFlash(exists ? `Editing workflow ${index}` : `Workflow ${index} is new - press s to create it`);
+      return null;
+    });
   }
 
   private snapshot(): WorkflowSnapshot {
@@ -346,6 +377,10 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     }
     if (matchesKey(data, "u")) {
       this.undo();
+      return true;
+    }
+    if (matchesKey(data, "w")) {
+      this.switchWorkflow();
       return true;
     }
     if (matchesKey(data, "[")) {
@@ -507,58 +542,48 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
 
   private toggleIfChanges(kind: SelectableKind, position: number): void {
     if (kind !== "loop") {
-      this.setFlash("if-changes applies to loop msg steps");
+      this.setFlash("if-changes applies to loop msg and cmd steps");
       return;
     }
     const step = this.draft.loop[position]!;
-    if (step.msg === undefined) {
-      this.setFlash("if-changes applies to loop msg steps");
+    if (step.msg === undefined && step.cmd === undefined) {
+      this.setFlash("if-changes applies to loop msg and cmd steps");
       return;
     }
     this.pushUndo(this.snapshot());
-    this.draft.loop[position] = step.onlyIfChanges ? { msg: step.msg } : { ...step, onlyIfChanges: true };
+    if (step.onlyIfChanges) {
+      this.draft.loop[position] = step.msg !== undefined ? { msg: step.msg } : { cmd: step.cmd! };
+    } else {
+      this.draft.loop[position] = { ...step, onlyIfChanges: true };
+    }
     this.dirty = true;
   }
 
   save(): void {
-    const messages = getMessages();
-    const indices = [
-      ...this.draft.start.flatMap((step) => (step.msg !== undefined ? [step.msg] : [])),
-      this.draft.tree,
-      ...this.draft.loop.flatMap((step) => (step.msg !== undefined ? [step.msg] : [])),
-      ...this.draft.finally.flatMap((step) => (step.msg !== undefined ? [step.msg] : [])),
-    ];
-    const missing = [...new Set(indices)].filter((num) => !messages[num]);
-    if (missing.length > 0) {
-      this.setFlash(`Missing messages: ${missing.join(", ")} - add and save them in the Messages tab first`);
-      return;
-    }
-    const commands = getCommands();
-    const cmdIndices = [
-      ...this.draft.start.flatMap((step) => (step.cmd !== undefined ? [step.cmd] : [])),
-      ...this.draft.loop.flatMap((step) => (step.cmd !== undefined ? [step.cmd] : [])),
-      ...this.draft.finally.flatMap((step) => (step.cmd !== undefined ? [step.cmd] : [])),
-    ];
-    const missingCommands = [...new Set(cmdIndices)].filter((num) => !commands[num]);
-    if (missingCommands.length > 0) {
-      this.setFlash(`Missing commands: ${missingCommands.join(", ")} - add and save them in the Commands tab first`);
-      return;
-    }
     const config: WorkflowConfig = {
       rounds: this.draft.rounds,
       start: [...this.draft.start],
       loop: [{ tree: this.draft.tree }, ...this.draft.loop.map((step) => ({ ...step }))],
       finally: this.draft.finally.map((step) => ({ ...step })),
     };
+    const { messages, commands } = missingReferences(config, getMessages(), getCommands());
+    if (messages.length > 0) {
+      this.setFlash(`Missing messages: ${messages.join(", ")} - add and save them in the Messages tab first`);
+      return;
+    }
+    if (commands.length > 0) {
+      this.setFlash(`Missing commands: ${commands.join(", ")} - add and save them in the Commands tab first`);
+      return;
+    }
     try {
-      setWorkflowConfig(config);
+      setWorkflowConfig(this.index, config);
     } catch (err) {
       this.setFlash(`Could not save workflow.json: ${err instanceof Error ? err.message : String(err)}`);
       return;
     }
     this.savedSnapshot = this.snapshot();
     this.dirty = false;
-    this.setFlash("workflow.json saved");
+    this.setFlash(`workflow.json saved (workflow ${this.index})`);
     this.notify("workflow.json saved", "info");
   }
 
@@ -571,7 +596,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       const trimmed = truncate(` ${text}`, innerWidth);
       lines.push(selected ? th.bg("selectedBg", th.fg("text", trimmed)) : th.fg("text", trimmed));
     };
-    lines.push(th.fg("dim", ` Rounds: ${this.draft.rounds}   ([ ] to change)`));
+    lines.push(th.fg("dim", ` Workflow ${this.index} · Rounds: ${this.draft.rounds}   ([ ] change · w switch)`));
     lines.push(th.fg("dim", " start"));
     this.draft.start.forEach((step, i) => {
       if (step.msg !== undefined) {
@@ -591,7 +616,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
         row(`msg ${step.msg}${step.onlyIfChanges ? " [if-changes]" : ""}`, selected);
       } else if (step.cmd !== undefined) {
         const preview = commands[step.cmd] ? commands[step.cmd]! : "(missing)";
-        row(`cmd ${step.cmd}: ${preview}`, selected);
+        row(`cmd ${step.cmd}${step.onlyIfChanges ? " [if-changes]" : ""}: ${preview}`, selected);
       }
     });
     lines.push(th.fg("dim", " finally"));
@@ -742,8 +767,9 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
   }
 
   save(): void {
-    const { config } = getWorkflowConfig();
-    const removed = this.referenced(config).filter((num) => this.draft[num] === undefined);
+    const { workflows } = getWorkflows();
+    const referenced = Object.values(workflows).flatMap((config) => this.referenced(config));
+    const removed = [...new Set(referenced.filter((num) => this.savedSnapshot.draft[num] !== undefined && this.draft[num] === undefined))];
     if (removed.length > 0) {
       this.setFlash(`${this.noun}s still used by the workflow: ${removed.join(", ")} - remove and save them in the Workflow tab first`);
       return;
@@ -766,7 +792,10 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
     if (this.keys.length === 0) {
       lines.push(th.fg("dim", ` No ${this.noun.toLowerCase()}s yet - press a to add one`));
     }
-    const header = (key: string) => ` ${key}: `;
+    const { workflows } = getWorkflows();
+    const referenced = new Set(Object.values(workflows).flatMap((config) => this.referenced(config)));
+    const contentHeight = Math.max(0, height - (referenced.size > 0 ? 1 : 0));
+    const header = (key: string) => ` ${key}${referenced.has(key) ? "*" : ""}: `;
     const entries: { text: string; selected: boolean }[] = [];
     const keyOffsets: number[] = [0];
     for (let i = 0; i < this.keys.length; i++) {
@@ -785,13 +814,14 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
     const selStart = keyOffsets[this.selection] ?? total;
     const selEnd = keyOffsets[this.selection + 1] ?? total;
     if (selStart < this.scroll) this.scroll = selStart;
-    if (selEnd > this.scroll + height) this.scroll = selEnd - height;
-    this.scroll = Math.max(0, Math.min(this.scroll, Math.max(0, total - height)));
-    for (let i = this.scroll; i < Math.min(total, this.scroll + height); i++) {
+    if (selEnd > this.scroll + contentHeight) this.scroll = selEnd - contentHeight;
+    this.scroll = Math.max(0, Math.min(this.scroll, Math.max(0, total - contentHeight)));
+    for (let i = this.scroll; i < Math.min(total, this.scroll + contentHeight); i++) {
       const entry = entries[i]!;
       const text = truncate(entry.text, innerWidth);
       lines.push(entry.selected ? th.bg("selectedBg", th.fg("text", text)) : th.fg("text", text));
     }
+    if (referenced.size > 0) lines.push(th.fg("dim", truncate(" * = referenced by the workflow", innerWidth)));
     while (lines.length < height) lines.push(th.fg("dim", "~"));
     return lines.slice(0, height);
   }
