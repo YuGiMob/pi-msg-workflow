@@ -390,8 +390,8 @@ export default function (pi: ExtensionAPI) {
     handler: async (_args, ctx: ExtensionCommandContext) => {
       if (!requireInteractive(ctx, "workflow-edit")) return;
       notifyConfigErrors(ctx, getWorkflowConfig().errors);
+      const sink: { overlay: WorkflowEditorOverlay | null } = { overlay: null };
       await ctx.ui.custom<void>((tui, theme, _keybindings, done) => {
-        const sink: { overlay: WorkflowEditorOverlay | null } = { overlay: null };
         const buffered: string[] = [];
         const stopCapturing = captureConsoleMessages((text) => {
           if (sink.overlay !== null) sink.overlay.showConsolePopup(text);
@@ -415,7 +415,10 @@ export default function (pi: ExtensionAPI) {
         sink.overlay = overlay;
         for (const text of buffered) overlay.showConsolePopup(text);
         return overlay;
-      }, OVERLAY_OPTIONS);
+      }, {
+        ...OVERLAY_OPTIONS,
+        onHandle: () => sink.overlay?.bringConsolePopupToFront(),
+      });
     },
   });
 

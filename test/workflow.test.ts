@@ -14,7 +14,11 @@ vi.mock("node:fs", () => ({
 }));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({}));
-vi.mock("@earendil-works/pi-tui", () => ({}));
+vi.mock("@earendil-works/pi-tui", () => ({
+  Key: { shift: (key: string) => key },
+  visibleWidth: (s: string) => s.length,
+  matchesKey: (data: string, key: unknown) => data === key,
+}));
 
 import { getWorkflowConfig, deleteWorkflowConfig, missingReferences } from "../src/workflow-config.js";
 
@@ -232,6 +236,32 @@ describe("workflow extension", () => {
     const ctx = createCtx();
     await commands["workflow-edit"].handler("", ctx);
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("workflow.json"), "warning");
+  });
+
+  it("shows console errors from tab loading as a popup and brings it to the front when the editor mounts", async () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("defaults.json")) return JSON.stringify({});
+      if (String(path).includes("workflow.json")) return JSON.stringify(holder.workflow);
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      if (String(path).includes(".config")) return "not json";
+      return JSON.stringify(MESSAGES);
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const showOverlay: any = vi.fn(() => ({ hide: vi.fn(), focus: vi.fn() }));
+    const theme = { fg: (_c: string, s: string) => s, bg: (_c: string, s: string) => s, bold: (s: string) => s };
+    const ctx = createCtx();
+    await commands["workflow-edit"].handler("", ctx);
+    const [factory, options] = ctx.ui.custom.mock.calls[0]!;
+    const done = vi.fn();
+    const overlay = factory({ terminal: { rows: 24 }, showOverlay }, theme, {}, done);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to read messages.json"), expect.anything());
+    expect(showOverlay).toHaveBeenCalledTimes(1);
+    expect(showOverlay.mock.calls[0]![0].render(60).join("\n")).toContain("Failed to read messages.json");
+    options.onHandle();
+    expect(showOverlay.mock.results[0]!.value.focus).toHaveBeenCalled();
+    overlay.handleInput("q");
+    expect(done).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it("aborts when required messages are missing", async () => {

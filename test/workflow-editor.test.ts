@@ -1236,7 +1236,7 @@ describe("WorkflowEditorOverlay", () => {
   beforeEach(() => {
     theme = createTheme();
     done = vi.fn();
-    showOverlay = vi.fn(() => ({ hide: vi.fn() }));
+    showOverlay = vi.fn(() => ({ hide: vi.fn(), focus: vi.fn() }));
     setupFs();
     workflowTab = new WorkflowTab(theme as any, vi.fn() as any);
     messagesTab = new MessagesTab(theme as any, vi.fn() as any);
@@ -1387,6 +1387,18 @@ describe("WorkflowEditorOverlay", () => {
     const popup = showOverlay.mock.calls[0]![0];
     popup.handleInput("j");
     expect(showOverlay.mock.results[0]!.value.hide).toHaveBeenCalled();
+  });
+
+  it("brings a showing console popup to the front", () => {
+    overlay.showConsolePopup("boom");
+    const handle = showOverlay.mock.results[0]!.value;
+    overlay.bringConsolePopupToFront();
+    expect(handle.focus).toHaveBeenCalled();
+  });
+
+  it("does nothing when no console popup is showing", () => {
+    overlay.bringConsolePopupToFront();
+    expect(showOverlay).not.toHaveBeenCalled();
   });
 
   it("auto-dismisses the console popup after 5 seconds", () => {

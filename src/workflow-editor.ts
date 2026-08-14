@@ -980,6 +980,10 @@ export class WorkflowEditorOverlay {
     this.showConsolePopupNow(text);
   }
 
+  bringConsolePopupToFront(): void {
+    this.consolePopupHandle?.focus();
+  }
+
   private showConsolePopupNow(text: string): void {
     this.consolePopupText = text;
     const width = Math.min(MAX_CONSOLE_POPUP_WIDTH, Math.max(MIN_CONSOLE_POPUP_WIDTH, visibleWidth(text) + 10));
