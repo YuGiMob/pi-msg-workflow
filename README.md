@@ -43,7 +43,7 @@ The package ships with default messages (`1`–`15`), commands (`1` = `git add .
 | `/cmd <number>` | Perform a predefined command. |
 | `/change-cmd <number> "<content>"` | Create or update a command (min 5 characters). |
 | `/show-cmd [number]` | Display a command, or list all commands. |
-| `/workflow [workflow] [rounds]` | Run a workflow (default `1`); `dry` or `--dry-run` prints the resolved plan. |
+| `/workflow [workflow] [rounds]` | Run a workflow (default `1`); `dry` or `--dry-run` prints the resolved plan; `list` lists the configured workflows. |
 | `/workflow-edit` | Open the interactive editor. |
 | `/workflow-reset` | Reset `workflow.json`, `messages.json`, and `commands.json` to the packaged defaults. |
 | `/tree-jump <number>` | Reset the agent's context to the response of message N. |
@@ -101,7 +101,7 @@ Commands that take a number offer Tab autocomplete.
 }
 ```
 
-`/workflow` runs workflow 1, `/workflow 2` runs workflow 2, and `/workflow 2 3` runs workflow 2 with three review rounds. `dry` or `--dry-run` prints the resolved plan for the selected workflow. A number that is not in `workflow.json` is rejected with `Workflow N does not exist.` — create it with `/workflow-edit` (press `w`).
+`/workflow` runs workflow 1, `/workflow 2` runs workflow 2, and `/workflow 2 3` runs workflow 2 with three review rounds. `dry` or `--dry-run` prints the resolved plan for the selected workflow. `list` prints all configured workflows with their rounds and step counts. A number that is not in `workflow.json` is rejected with `Workflow N does not exist.` — create it with `/workflow-edit` (press `w`).
 
 ### The default workflow (1)
 
@@ -157,7 +157,7 @@ Workflow 2 is a focused review loop over duplicated logic, unnecessary complexit
 The tree step resets the context to the response of message 1, the shared read-the-codebase step of this workflow.
 ## The editor
 
-`/workflow-edit` opens an overlay with three tabs: **[Workflow]** (workflow number, rounds, start/loop/finally steps, tree anchor, add/delete/reorder, if-changes toggle, workflow switching), **[Messages]** and **[Commands]** (add, edit, delete store entries). Changes are saved per tab with `s`; closing with unsaved changes asks for confirmation.
+`/workflow-edit` opens an overlay with three tabs: **[Workflow]** (workflow number, rounds, start/loop/finally steps, tree anchor, add/delete/reorder, if-changes toggle, workflow switching and deletion), **[Messages]** and **[Commands]** (add, edit, delete store entries). Changes are saved per tab with `s`; closing with unsaved changes asks for confirmation.
 
 | Key | Action |
 | --- | --- |
@@ -171,12 +171,13 @@ The tree step resets the context to the response of message 1, the shared read-t
 | `[` / `]` | decrease / increase rounds |
 | `u` | undo the last change to the active tab |
 | `w` | switch to another workflow (an unused number creates a new workflow on save) |
+| `d` | delete the current workflow (type `y` to confirm) |
 | `s` | save the active tab |
 | `q` / `Esc` | close (asks for confirmation when there are unsaved changes) |
 
 While editing content, `←` / `→` move the cursor, `Home` / `End` jump to the start / end, `Delete` removes the character under the cursor, and `Backspace` removes the character before it. Input longer than the window wraps onto additional lines, so the full content stays visible while you type or paste.
 
-The Workflow tab edits one workflow at a time. `w` switches to another workflow number; switching to a number that does not exist yet starts a new workflow which is created when you press `s`. The tab bar shows the number of the workflow being edited (e.g. `[Workflow 2]`). Saving the Workflow tab refuses indices that reference missing messages or commands, so add and save those in the Messages/Commands tabs first. Saving the Messages and Commands tabs refuses to delete entries still referenced by any workflow, so drop and save those references in the Workflow tab first. Entries referenced by any workflow are marked with `*` in the Messages and Commands tabs. The tree step is fixed as the first loop step — only its anchor index is editable.
+The Workflow tab edits one workflow at a time. `w` switches to another workflow number; switching to a number that does not exist yet starts a new workflow which is created when you press `s`. `d` deletes the current workflow after typing `y` to confirm. The tab bar shows the number of the workflow being edited (e.g. `[Workflow 2]`). Saving the Workflow tab refuses indices that reference missing messages or commands, so add and save those in the Messages/Commands tabs first. Saving the Messages and Commands tabs refuses to delete entries still referenced by any workflow, so drop and save those references in the Workflow tab first. Entries referenced by any workflow are marked with `*N` (the workflow number) in the Messages and Commands tabs. The tree step is fixed as the first loop step — only its anchor index is editable.
 ## Data location
 
 `workflow.json` (all numbered workflows), `messages.json`, and `commands.json` live in `~/.config/pi-msg-workflow/`. On first use the packaged defaults are copied there; afterwards all reads and writes use the user copies, so updating the package never overwrites your customizations. If you previously edited these files inside the installed package, back them up before updating — npm replaces the package directory.

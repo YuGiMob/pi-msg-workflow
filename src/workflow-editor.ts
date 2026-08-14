@@ -3,7 +3,7 @@ import { Key, decodeKittyPrintable, matchesKey, visibleWidth, type OverlayHandle
 import { getMessages, setMessages } from "./messages.js";
 import { getCommands, setCommands } from "./commands.js";
 import { MAX_ROUNDS } from "./constants.js";
-import { getWorkflows, getWorkflowConfig, setWorkflowConfig, missingReferences, referencedIndices, referencedCommands, isNumericString, type LoopStep, type WorkflowConfig } from "./workflow-config.js";
+import { getWorkflows, getWorkflowConfig, setWorkflowConfig, deleteWorkflowConfig, missingReferences, referencedIndices, referencedCommands, isNumericString, type LoopStep, type WorkflowConfig } from "./workflow-config.js";
 import { compareNumericKeys } from "./json-file.js";
 import { errorMessage } from "./errors.js";
 
@@ -281,7 +281,7 @@ type SelectableKind = "start" | "tree" | "loop" | "finally";
 type LoadResult = { ok: true; flash?: string } | { ok: false; flash: string };
 export class WorkflowTab extends BaseEditorTab implements EditorTab {
   private index = "1";
-  readonly footerHints = "j/k sel · e edit · a add · x del · J/K move · t if-chg · [ ] rnds · w switch · u undo · s save";
+  readonly footerHints = "j/k sel · e edit · a add · x del · d del-wf · J/K move · t if-chg · [ ] rnds · w switch · u undo · s save";
   readonly draft: WorkflowDraft;
   private selection = 0;
   private savedSnapshot: WorkflowSnapshot;
@@ -348,6 +348,29 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
         return null;
       }
       this.setFlash(result.flash ?? (exists ? `Editing workflow ${index}` : `Workflow ${index} is new - press s to create it`));
+      return null;
+    });
+  }
+
+  private deleteWorkflow(): void {
+    const { exists } = getWorkflowConfig(this.index);
+    if (!exists) {
+      this.setFlash(`Workflow ${this.index} does not exist - nothing to delete`);
+      return;
+    }
+    this.startInput(`delete workflow ${this.index}? type y to confirm: `, (value) => {
+      const answer = value.trim().toLowerCase();
+      if (answer !== "y" && answer !== "yes") return null;
+      const deleted = this.index;
+      try {
+        deleteWorkflowConfig(deleted);
+      } catch (err) {
+        this.setFlash(`Could not delete workflow ${deleted}: ${errorMessage(err)}`);
+        return null;
+      }
+      this.loadWorkflow("1");
+      this.setFlash(`Workflow ${deleted} deleted`);
+      this.notify(`workflow ${deleted} deleted`, "info");
       return null;
     });
   }
@@ -443,6 +466,10 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     }
     if (matchesKey(data, "w")) {
       this.switchWorkflow();
+      return true;
+    }
+    if (matchesKey(data, "d")) {
+      this.deleteWorkflow();
       return true;
     }
     if (matchesKey(data, "[")) {
@@ -795,9 +822,16 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
       lines.push(th.fg("dim", ` No ${this.noun.toLowerCase()}s yet - press a to add one`));
     }
     const { workflows } = getWorkflows();
-    const referenced = new Set(Object.values(workflows).flatMap((config) => this.referenced(config)));
-    const contentHeight = Math.max(0, height - (referenced.size > 0 ? 1 : 0));
-    const header = (key: string) => ` ${key}${referenced.has(key) ? "*" : ""}: `;
+    const referencedBy = new Map<string, string[]>();
+    for (const [wfIndex, config] of Object.entries(workflows)) {
+      for (const num of this.referenced(config)) {
+        const list = referencedBy.get(num);
+        if (list) list.push(wfIndex);
+        else referencedBy.set(num, [wfIndex]);
+      }
+    }
+    const contentHeight = Math.max(0, height - (referencedBy.size > 0 ? 1 : 0));
+    const header = (key: string) => ` ${key}${referencedBy.has(key) ? `*${referencedBy.get(key)!.join(",")}` : ""}: `;
     const entries: { text: string; selected: boolean }[] = [];
     const keyOffsets: number[] = [0];
     for (let i = 0; i < this.keys.length; i++) {
@@ -823,7 +857,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
       const text = truncate(entry.text, innerWidth);
       lines.push(entry.selected ? th.bg("selectedBg", th.fg("text", text)) : th.fg("text", text));
     }
-    if (referenced.size > 0) lines.push(th.fg("dim", truncate(" * = referenced by the workflow", innerWidth)));
+    if (referencedBy.size > 0) lines.push(th.fg("dim", truncate(" *N = referenced by workflow N", innerWidth)));
     while (lines.length < height) lines.push(th.fg("dim", "~"));
     return lines.slice(0, height);
   }

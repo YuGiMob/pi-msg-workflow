@@ -791,6 +791,41 @@ describe("WorkflowTab", () => {
     expect(written["1"]).toEqual(WORKFLOW_JSON["1"]);
     expect(written["2"]).toEqual(WORKFLOW_JSON["2"]);
   });
+
+  it("deletes the current workflow after confirmation", () => {
+    tab.handleInput("w");
+    type(tab, "2");
+    tab.handleInput("\r");
+    tab.handleInput("d");
+    type(tab, "y");
+    tab.handleInput("\r");
+    expect((tab as any).index).toBe("1");
+    expect(tab.draft.start).toEqual([{ msg: "1" }, { msg: "2" }, { msg: "3" }, { msg: "4" }, { msg: "5" }]);
+    const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
+    expect(written["2"]).toBeUndefined();
+    expect(written["1"]).toEqual(WORKFLOW_JSON["1"]);
+    expect(tab.dirty).toBe(false);
+  });
+
+  it("keeps the workflow when deletion is not confirmed", () => {
+    tab.handleInput("w");
+    type(tab, "2");
+    tab.handleInput("\r");
+    tab.handleInput("d");
+    type(tab, "n");
+    tab.handleInput("\r");
+    expect((tab as any).index).toBe("2");
+    expect(writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it("refuses to delete a workflow that does not exist", () => {
+    tab.handleInput("w");
+    type(tab, "7");
+    tab.handleInput("\r");
+    tab.handleInput("d");
+    expect(tab.getAboveContentLine(80)[0]).toContain("nothing to delete");
+    expect(writeFileSync).not.toHaveBeenCalled();
+  });
 });
 
 describe("MessagesTab", () => {
@@ -1062,7 +1097,7 @@ describe("MessagesTab", () => {
     tab.handleInput("j");
     tab.handleInput("j");
     const lines = tab.render(40, 6);
-    expect(lines.join("\n")).toContain("3*: tail");
+    expect(lines.join("\n")).toContain("3*1: tail");
   });
 
   it("marks entries referenced by the workflow", () => {
@@ -1073,10 +1108,10 @@ describe("MessagesTab", () => {
     });
     const tab = new MessagesTab(theme as any, notify);
     const content = tab.render(80, 12).join("\n");
-    expect(content).toContain("1*: ");
-    expect(content).toContain("3*: ");
+    expect(content).toContain("1*1: ");
+    expect(content).toContain("3*1: ");
     expect(content).toContain(" 2: ");
-    expect(content).toContain(" * = referenced by the workflow");
+    expect(content).toContain(" *N = referenced by workflow N");
   });
 
   it("marks entries referenced by any workflow", () => {
@@ -1089,8 +1124,8 @@ describe("MessagesTab", () => {
     const tab = new MessagesTab(theme as any, notify);
     for (let i = 0; i < 16; i++) tab.handleInput("j");
     const content = tab.render(80, 12).join("\n");
-    expect(content).toContain("9*: ");
-    expect(content).toContain("17*: ");
+    expect(content).toContain("9*2: ");
+    expect(content).toContain("17*2: ");
   });
 
   it("refuses to delete a message referenced by another workflow", () => {

@@ -16,7 +16,7 @@ vi.mock("node:fs", () => ({
 vi.mock("@earendil-works/pi-coding-agent", () => ({}));
 vi.mock("@earendil-works/pi-tui", () => ({}));
 
-import { getWorkflowConfig, missingReferences } from "../src/workflow-config.js";
+import { getWorkflowConfig, deleteWorkflowConfig, missingReferences } from "../src/workflow-config.js";
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -206,6 +206,15 @@ describe("workflow extension", () => {
     expect(commands["tree-jump"]).toBeDefined();
     expect(commands["workflow-stop"]).toBeDefined();
     expect(commands["workflow-reset"]).toBeDefined();
+  });
+
+  it("provides completions for workflow numbers and flags", () => {
+    holder.workflow = { "1": structuredClone(DEFAULT_WORKFLOW), "2": structuredClone(WORKFLOW2) };
+    const completions = commands["workflow"].getArgumentCompletions("");
+    expect(completions.some((c: any) => c.value === "1")).toBe(true);
+    expect(completions.some((c: any) => c.value === "2")).toBe(true);
+    expect(completions.some((c: any) => c.value === "dry")).toBe(true);
+    expect(completions.some((c: any) => c.value === "list")).toBe(true);
   });
 
   it("requires interactive mode", async () => {
@@ -478,6 +487,28 @@ describe("workflow extension", () => {
     const ctx = createCtx([]);
     await commands["workflow"].handler("1 3 --dry-run", ctx);
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Dry run: Workflow 1, 3 rounds"), "info");
+    expect(pi.sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it("lists the configured workflows", async () => {
+    holder.workflow = { "1": structuredClone(DEFAULT_WORKFLOW), "2": structuredClone(WORKFLOW2) };
+    const ctx = createCtx();
+    await commands["workflow"].handler("list", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Workflows:"), "info");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("1: 2 rounds (5 start, 6 loop, 1 finally)"), "info");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("2: 2 rounds (5 start, 6 loop, 1 finally)"), "info");
+    expect(pi.sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it("reports when no workflows are defined", async () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({});
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const ctx = createCtx();
+    await commands["workflow"].handler("list", ctx);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("No workflows defined"), "info");
     expect(pi.sendUserMessage).not.toHaveBeenCalled();
   });
 
@@ -828,6 +859,42 @@ describe("workflow extension", () => {
       expect(pi.sendUserMessage).toHaveBeenCalledTimes(3);
       expect(pi.sendUserMessage).toHaveBeenCalledWith(MSG6, { deliverAs: "followUp" });
       expect(ctx.ui.notify).toHaveBeenCalledWith("Failed to send message 6", "error");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not re-send a message that lands after the send deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      holder.workflow = { "1": { rounds: 1, start: [], loop: [{ tree: "1" }, { msg: "6" }], finally: [] } };
+      pi.sendUserMessage = vi.fn((content: string) => {
+        if (content === MSG6) {
+          setTimeout(() => {
+            const id = String(holder.branch.length);
+            holder.branch.push(userEntry(`u${id}`, content));
+            holder.branch.push(assistantEntry(`a${id}`));
+            holder.state.active = false;
+          }, 5000);
+          return;
+        }
+        const id = String(holder.branch.length);
+        holder.branch.push(userEntry(`u${id}`, content));
+        holder.branch.push(assistantEntry(`a${id}`));
+        holder.state.active = true;
+      });
+      const ctx = createCtx(fullPhaseA(), {
+        isIdle: vi.fn(() => true),
+        waitForIdle: vi.fn(async () => {
+          holder.state.active = false;
+        }),
+      });
+      const handlerPromise = commands["workflow"].handler("", ctx);
+      await vi.advanceTimersByTimeAsync(6000);
+      await handlerPromise;
+      expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
+      expect(pi.sendUserMessage).toHaveBeenCalledWith(MSG6, { deliverAs: "followUp" });
+      expect(ctx.ui.notify).toHaveBeenCalledWith("Workflow 1 complete: 1 round", "info");
     } finally {
       vi.useRealTimers();
     }
@@ -1264,6 +1331,42 @@ describe("getWorkflowConfig", () => {
     const { config, errors } = getWorkflowConfig();
     expect(config.loop).toEqual([{ tree: "1" }]);
     expect(errors).toHaveLength(2);
+  });
+});
+
+describe("deleteWorkflowConfig", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("removes a workflow from the file", () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReturnValue(
+      JSON.stringify({
+        "1": { rounds: 1, start: [], loop: [{ tree: "1" }], finally: [] },
+        "2": { rounds: 1, start: [], loop: [{ tree: "1" }], finally: [] },
+      }) as never,
+    );
+    deleteWorkflowConfig("2");
+    const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
+    expect(written["2"]).toBeUndefined();
+    expect(written["1"]).toBeDefined();
+  });
+
+  it("keeps a legacy single-config file when deleting another workflow", () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ rounds: 1, start: [], loop: [{ tree: "1" }], finally: [] }) as never);
+    deleteWorkflowConfig("2");
+    const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
+    expect(written["1"]).toEqual({ rounds: 1, start: [], loop: [{ tree: "1" }], finally: [] });
+  });
+
+  it("empties a legacy single-config file when deleting workflow 1", () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ rounds: 1, start: [], loop: [{ tree: "1" }], finally: [] }) as never);
+    deleteWorkflowConfig("1");
+    const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
+    expect(written).toEqual({});
   });
 });
 

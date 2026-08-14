@@ -3,8 +3,9 @@ import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { getMessages, setMessages } from "./src/messages.js";
 import { getCommands, setCommands } from "./src/commands.js";
 import { MAX_ROUNDS } from "./src/constants.js";
+import { compareNumericKeys } from "./src/json-file.js";
 import { runCommand, commandFailureMessage } from "./src/command-runner.js";
-import { getWorkflowConfig, missingReferences, isNumericString, type StartStep, type LoopStep } from "./src/workflow-config.js";
+import { getWorkflows, getWorkflowConfig, missingReferences, isNumericString, type StartStep, type LoopStep } from "./src/workflow-config.js";
 import { resetUserData } from "./src/user-data.js";
 import { countLeadingPhaseMatches, findAnchorAfterMessage, countUserTextMatches } from "./src/session-helpers.js";
 import { WorkflowEditorOverlay, WorkflowTab, MessagesTab, CommandsTab, MAX_OVERLAY_HEIGHT_RATIO, type EditorTab } from "./src/workflow-editor.js";
@@ -283,9 +284,15 @@ async function sendAndWaitForTurn(
   ctx: { isIdle(): boolean; waitForIdle(): Promise<void>; sessionManager: { getBranch(): SessionEntry[] } },
   text: string,
 ): Promise<SendResult> {
+  let previousCount = -1;
   for (let attempt = 0; attempt < SEND_MAX_ATTEMPTS; attempt++) {
     if (workflowStopRequested) return "cancelled";
     const before = countUserTextMatches(ctx.sessionManager.getBranch(), text);
+    if (previousCount !== -1 && before > previousCount) {
+      await ctx.waitForIdle();
+      return "sent";
+    }
+    previousCount = before;
     try {
       pi.sendUserMessage(text, { deliverAs: "followUp" });
     } catch {
@@ -441,9 +448,37 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("workflow", {
     description:
       "Run a numbered workflow (default 1): start messages, then review rounds of tree reset, stored commands and messages (see workflow.json)",
+    getArgumentCompletions: (prefix) => {
+      const { workflows } = getWorkflows();
+      const items = Object.keys(workflows)
+        .filter((num) => num.startsWith(prefix))
+        .map((num) => {
+          const config = workflows[num]!;
+          return { value: num, label: `Workflow ${num}: ${config.rounds} rounds (${config.start.length} start, ${config.loop.length} loop, ${config.finally.length} finally)` };
+        });
+      for (const flag of ["dry", "list"]) {
+        if (flag.startsWith(prefix)) items.push({ value: flag, label: flag });
+      }
+      return items;
+    },
     handler: async (args, ctx: ExtensionCommandContext) => {
       if (!requireInteractive(ctx, "workflow")) return;
       const tokens = args.trim().split(/\s+/).filter(Boolean);
+      if (tokens.some((token) => token === "list")) {
+        const { workflows, errors } = getWorkflows();
+        notifyConfigErrors(ctx, errors);
+        const keys = Object.keys(workflows).sort(compareNumericKeys);
+        if (keys.length === 0) {
+          ctx.ui.notify("No workflows defined. Use /workflow-edit and press w to create one.", "info");
+          return;
+        }
+        const lines = keys.map((num) => {
+          const config = workflows[num]!;
+          return `  ${num}: ${config.rounds} round${config.rounds === 1 ? "" : "s"} (${config.start.length} start, ${config.loop.length} loop, ${config.finally.length} finally)`;
+        });
+        ctx.ui.notify(`Workflows:\n${lines.join("\n")}`, "info");
+        return;
+      }
       const dryRun = tokens.some((token) => token === "dry" || token === "--dry-run");
       if (!dryRun && workflowRunning) {
         ctx.ui.notify("A workflow is already running - use /workflow-stop to cancel it", "warning");

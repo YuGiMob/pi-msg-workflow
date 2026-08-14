@@ -186,24 +186,39 @@ export function getWorkflowConfig(index = "1"): { config: WorkflowConfig; errors
   return { config: defaultConfig(), errors, exists: fallback && index === "1", fallback };
 }
 
-export function setWorkflowConfig(index: string, config: WorkflowConfig): void {
-  ensureUserDataDir();
+function readWorkflowEntries(): Record<string, unknown> {
   const workflows: Record<string, unknown> = {};
   const raw = readJsonObject(WORKFLOW_FILE);
-  if (raw !== null) {
-    if (isSingleConfig(raw)) {
-      workflows["1"] = raw;
-    } else {
-      for (const [key, value] of Object.entries(raw)) {
-        if (isNumericString(key) && value !== null && typeof value === "object" && !Array.isArray(value)) {
-          workflows[key] = value;
-        }
-      }
+  if (raw === null) return workflows;
+  if (isSingleConfig(raw)) {
+    workflows["1"] = raw;
+    return workflows;
+  }
+  for (const [key, value] of Object.entries(raw)) {
+    if (isNumericString(key) && value !== null && typeof value === "object" && !Array.isArray(value)) {
+      workflows[key] = value;
     }
   }
-  workflows[index] = config;
+  return workflows;
+}
+
+function writeWorkflowEntries(workflows: Record<string, unknown>): void {
   const sorted = Object.fromEntries(Object.entries(workflows).sort(([a], [b]) => compareNumericKeys(a, b)));
   writeJsonAtomic(WORKFLOW_FILE, sorted);
+}
+
+export function setWorkflowConfig(index: string, config: WorkflowConfig): void {
+  ensureUserDataDir();
+  const workflows = readWorkflowEntries();
+  workflows[index] = config;
+  writeWorkflowEntries(workflows);
+}
+
+export function deleteWorkflowConfig(index: string): void {
+  ensureUserDataDir();
+  const workflows = readWorkflowEntries();
+  delete workflows[index];
+  writeWorkflowEntries(workflows);
 }
 
 function collectStepRefs(config: WorkflowConfig, fields: ("msg" | "cmd" | "tree")[]): string[] {
