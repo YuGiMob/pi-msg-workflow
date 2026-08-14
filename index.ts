@@ -10,6 +10,7 @@ import { resetUserData } from "./src/user-data.js";
 import { countLeadingPhaseMatches, findAnchorAfterMessage, countUserTextMatches } from "./src/session-helpers.js";
 import { WorkflowEditorOverlay, WorkflowTab, MessagesTab, CommandsTab, MAX_OVERLAY_HEIGHT_RATIO, type EditorTab } from "./src/workflow-editor.js";
 import { errorMessage } from "./src/errors.js";
+import { captureConsoleMessages } from "./src/console-capture.js";
 
 const OVERLAY_OPTIONS = {
   overlay: true,
@@ -390,18 +391,30 @@ export default function (pi: ExtensionAPI) {
       if (!requireInteractive(ctx, "workflow-edit")) return;
       notifyConfigErrors(ctx, getWorkflowConfig().errors);
       await ctx.ui.custom<void>((tui, theme, _keybindings, done) => {
+        const sink: { overlay: WorkflowEditorOverlay | null } = { overlay: null };
+        const buffered: string[] = [];
+        const stopCapturing = captureConsoleMessages((text) => {
+          if (sink.overlay !== null) sink.overlay.showConsolePopup(text);
+          else buffered.push(text);
+        });
         const tabs: EditorTab[] = [
           new WorkflowTab(theme, (text, kind) => ctx.ui.notify(text, kind)),
           new MessagesTab(theme, (text, kind) => ctx.ui.notify(text, kind)),
           new CommandsTab(theme, (text, kind) => ctx.ui.notify(text, kind)),
         ];
-        return new WorkflowEditorOverlay({
+        const overlay = new WorkflowEditorOverlay({
           title: "Workflow Editor",
           tabs,
           theme,
           tui,
-          done,
+          done: () => {
+            stopCapturing();
+            done();
+          },
         });
+        sink.overlay = overlay;
+        for (const text of buffered) overlay.showConsolePopup(text);
+        return overlay;
       }, OVERLAY_OPTIONS);
     },
   });

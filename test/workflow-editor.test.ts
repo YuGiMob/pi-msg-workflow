@@ -1371,4 +1371,71 @@ describe("WorkflowEditorOverlay", () => {
     workflowTab.handleInput("e");
     expect(workflowTab.handleInput("x")).toBe(true);
   });
+
+  it("shows console output as a temporary popup above the editor", () => {
+    overlay.showConsolePopup("Failed to read messages.json: Error: boom");
+    expect(showOverlay).toHaveBeenCalledTimes(1);
+    expect(showOverlay.mock.calls[0]![1]).toMatchObject({ anchor: "center" });
+    const popup = showOverlay.mock.calls[0]![0];
+    const lines = popup.render(60).join("\n");
+    expect(lines).toContain("Failed to read messages.json: Error: boom");
+    expect(lines).toContain("console output");
+  });
+
+  it("dismisses the console popup on any key", () => {
+    overlay.showConsolePopup("boom");
+    const popup = showOverlay.mock.calls[0]![0];
+    popup.handleInput("j");
+    expect(showOverlay.mock.results[0]!.value.hide).toHaveBeenCalled();
+  });
+
+  it("auto-dismisses the console popup after 5 seconds", () => {
+    vi.useFakeTimers();
+    try {
+      overlay.showConsolePopup("boom");
+      vi.advanceTimersByTime(5000);
+      expect(showOverlay.mock.results[0]!.value.hide).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("queues console messages that arrive while a popup is showing", () => {
+    overlay.showConsolePopup("first");
+    overlay.showConsolePopup("second");
+    expect(showOverlay).toHaveBeenCalledTimes(1);
+    showOverlay.mock.calls[0]![0].handleInput("j");
+    expect(showOverlay).toHaveBeenCalledTimes(2);
+    expect(showOverlay.mock.calls[1]![0].render(60).join("\n")).toContain("second");
+  });
+
+  it("does not re-show a console message that is already showing or queued", () => {
+    overlay.showConsolePopup("first");
+    overlay.showConsolePopup("first");
+    overlay.showConsolePopup("second");
+    showOverlay.mock.calls[0]![0].handleInput("j");
+    expect(showOverlay).toHaveBeenCalledTimes(2);
+    expect(showOverlay.mock.calls[1]![0].render(60).join("\n")).toContain("second");
+  });
+
+  it("ignores empty console messages", () => {
+    overlay.showConsolePopup("");
+    expect(showOverlay).not.toHaveBeenCalled();
+  });
+
+  it("caps very long console messages and marks truncation", () => {
+    overlay.showConsolePopup("word ".repeat(200).trim());
+    const lines = showOverlay.mock.calls[0]![0].render(80);
+    expect(lines).toHaveLength(10);
+    expect(lines.join("\n")).toContain(" …");
+  });
+
+  it("hides the console popup and drops the queue when closing", () => {
+    overlay.showConsolePopup("first");
+    overlay.showConsolePopup("second");
+    overlay.handleInput("q");
+    expect(done).toHaveBeenCalled();
+    expect(showOverlay.mock.results[0]!.value.hide).toHaveBeenCalled();
+    expect(showOverlay).toHaveBeenCalledTimes(1);
+  });
 });

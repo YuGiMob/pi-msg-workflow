@@ -30,7 +30,10 @@ const CONTENT_HEIGHT = 24;
 const CHROME_ROWS = 7;
 export const MAX_OVERLAY_HEIGHT_RATIO = 0.9;
 const FLASH_MS = 2500;
-const CONFIRM_POPUP_MS = 5000;
+const POPUP_MS = 5000;
+const MIN_CONSOLE_POPUP_WIDTH = 40;
+const MAX_CONSOLE_POPUP_WIDTH = 80;
+const MAX_CONSOLE_POPUP_LINES = 6;
 const PASTE_START = "\x1b[200~";
 const PASTE_END = "\x1b[201~";
 
@@ -905,16 +908,17 @@ export interface WorkflowEditorOverlayOptions {
   done: () => void;
 }
 
-class ConfirmClosePopup {
+class Popup {
   constructor(
     private readonly theme: Theme,
-    private readonly text: string,
-    private readonly onConfirm: () => void,
+    private readonly lines: string[],
+    private readonly hint: string,
     private readonly onDismiss: () => void,
+    private readonly onConfirm?: () => void,
   ) {}
 
   handleInput(data: string): void {
-    if (matchesKey(data, "q")) {
+    if (this.onConfirm && matchesKey(data, "q")) {
       this.onConfirm();
     } else {
       this.onDismiss();
@@ -928,12 +932,11 @@ class ConfirmClosePopup {
     const innerW = width - 2;
     const pad = (text: string) => text + " ".repeat(Math.max(0, innerW - visibleWidth(text)));
     const row = (content: string) => th.fg("border", "│") + pad(content) + th.fg("border", "│");
-    return [
-      th.fg("border", `╭${"─".repeat(innerW)}╮`),
-      row(` ${th.fg("warning", this.text)}`),
-      row(th.fg("dim", " q to close · any other key to keep editing")),
-      th.fg("border", `╰${"─".repeat(innerW)}╯`),
-    ];
+    const lines = [th.fg("border", `╭${"─".repeat(innerW)}╮`)];
+    for (const line of this.lines) lines.push(row(line));
+    lines.push(row(th.fg("dim", this.hint)));
+    lines.push(th.fg("border", `╰${"─".repeat(innerW)}╯`));
+    return lines;
   }
 }
 
@@ -941,6 +944,10 @@ export class WorkflowEditorOverlay {
   private activeTab = 0;
   private confirmPopupHandle: OverlayHandle | undefined;
   private confirmPopupTimer: ReturnType<typeof setTimeout> | undefined;
+  private consoleQueue: string[] = [];
+  private consolePopupText: string | null = null;
+  private consolePopupHandle: OverlayHandle | undefined;
+  private consolePopupTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly opts: WorkflowEditorOverlayOptions) {}
 
@@ -957,19 +964,61 @@ export class WorkflowEditorOverlay {
     this.confirmPopupHandle = undefined;
   }
 
+  private close(): void {
+    this.hideConfirmPopup();
+    this.consoleQueue.length = 0;
+    this.hideConsolePopup();
+    this.opts.done();
+  }
+
+  showConsolePopup(text: string): void {
+    if (text === "" || text === this.consolePopupText || this.consoleQueue.includes(text)) return;
+    if (this.consolePopupHandle !== undefined) {
+      this.consoleQueue.push(text);
+      return;
+    }
+    this.showConsolePopupNow(text);
+  }
+
+  private showConsolePopupNow(text: string): void {
+    this.consolePopupText = text;
+    const width = Math.min(MAX_CONSOLE_POPUP_WIDTH, Math.max(MIN_CONSOLE_POPUP_WIDTH, visibleWidth(text) + 10));
+    const wrapped = wrapText(text, Math.max(1, width - 3)).map((line) => ` ${line}`);
+    const content = wrapped.length > MAX_CONSOLE_POPUP_LINES ? [...wrapped.slice(0, MAX_CONSOLE_POPUP_LINES), " …"] : wrapped;
+    const popup = new Popup(
+      this.opts.theme,
+      content.map((line) => this.opts.theme.fg("warning", line)),
+      " console output · any key to dismiss",
+      () => this.hideConsolePopup(),
+    );
+    this.consolePopupHandle = this.opts.tui.showOverlay(popup, {
+      anchor: "center",
+      width,
+    });
+    this.consolePopupTimer = setTimeout(() => this.hideConsolePopup(), POPUP_MS);
+  }
+
+  private hideConsolePopup(): void {
+    if (this.consolePopupTimer) {
+      clearTimeout(this.consolePopupTimer);
+      this.consolePopupTimer = undefined;
+    }
+    this.consolePopupHandle?.hide();
+    this.consolePopupHandle = undefined;
+    this.consolePopupText = null;
+    const next = this.consoleQueue.shift();
+    if (next !== undefined) this.showConsolePopupNow(next);
+  }
+
   private showConfirmPopup(): void {
     if (this.confirmPopupHandle) return;
     const text = "Unsaved changes - press q again to close";
-    const popup = new ConfirmClosePopup(
+    const popup = new Popup(
       this.opts.theme,
-      text,
-      () => {
-        this.hideConfirmPopup();
-        this.opts.done();
-      },
-      () => {
-        this.hideConfirmPopup();
-      },
+      [this.opts.theme.fg("warning", ` ${text}`)],
+      " q to close · any other key to keep editing",
+      () => this.hideConfirmPopup(),
+      () => this.close(),
     );
     this.confirmPopupHandle = this.opts.tui.showOverlay(popup, {
       anchor: "center",
@@ -977,7 +1026,7 @@ export class WorkflowEditorOverlay {
     });
     this.confirmPopupTimer = setTimeout(() => {
       this.hideConfirmPopup();
-    }, CONFIRM_POPUP_MS);
+    }, POPUP_MS);
   }
 
   handleInput(data: string): void {
@@ -998,7 +1047,7 @@ export class WorkflowEditorOverlay {
         this.showConfirmPopup();
         return;
       }
-      this.opts.done();
+      this.close();
       return;
     }
   }
