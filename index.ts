@@ -398,9 +398,9 @@ export default function (pi: ExtensionAPI) {
           else buffered.push(text);
         });
         const tabs: EditorTab[] = [
-          new WorkflowTab(theme, (text, kind) => ctx.ui.notify(text, kind)),
-          new MessagesTab(theme, (text, kind) => ctx.ui.notify(text, kind)),
-          new CommandsTab(theme, (text, kind) => ctx.ui.notify(text, kind)),
+          new WorkflowTab(theme),
+          new MessagesTab(theme),
+          new CommandsTab(theme),
         ];
         const overlay = new WorkflowEditorOverlay({
           title: "Workflow Editor",

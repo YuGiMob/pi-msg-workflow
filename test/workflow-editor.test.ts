@@ -139,14 +139,12 @@ describe("deepEqual", () => {
 
 describe("WorkflowTab", () => {
   let theme: ReturnType<typeof createTheme>;
-  let notify: any;
   let tab: WorkflowTab;
 
   beforeEach(() => {
     theme = createTheme();
-    notify = vi.fn();
     setupFs();
-    tab = new WorkflowTab(theme as any, notify);
+    tab = new WorkflowTab(theme as any);
   });
 
   afterEach(() => {
@@ -174,7 +172,7 @@ describe("WorkflowTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
       return JSON.stringify(MESSAGES);
     });
-    const tab = new WorkflowTab(theme as any, notify);
+    const tab = new WorkflowTab(theme as any);
     expect(tab.draft.tree).toBe("1");
     expect(tab.draft.loop).toEqual([{ msg: "6" }]);
     expect(tab.getAboveContentLine(80)[0]).toContain("moved to the start of the loop");
@@ -186,7 +184,7 @@ describe("WorkflowTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
       return JSON.stringify(MESSAGES);
     });
-    const tab = new WorkflowTab(theme as any, notify);
+    const tab = new WorkflowTab(theme as any);
     expect(tab.draft.tree).toBe("1");
     expect(tab.draft.loop).toEqual([{ msg: "6" }, { tree: "2" }]);
     expect(tab.getAboveContentLine(80)[0]).toContain("moved to the start of the loop");
@@ -198,7 +196,7 @@ describe("WorkflowTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
       return JSON.stringify(MESSAGES);
     });
-    const tab = new WorkflowTab(theme as any, notify);
+    const tab = new WorkflowTab(theme as any);
     const lines = tab.render(78, 12).join("\n");
     expect(lines).toContain("tree → 2");
   });
@@ -209,7 +207,7 @@ describe("WorkflowTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
       return JSON.stringify(MESSAGES);
     });
-    const tab = new WorkflowTab(theme as any, notify);
+    const tab = new WorkflowTab(theme as any);
     tab.handleInput("j");
     tab.handleInput("e");
     tab.handleInput("3");
@@ -224,7 +222,7 @@ describe("WorkflowTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
       return JSON.stringify(MESSAGES);
     });
-    const tab = new WorkflowTab(theme as any, notify);
+    const tab = new WorkflowTab(theme as any);
     expect(tab.draft.start).toEqual([]);
     expect(tab.getAboveContentLine(80)[0]).toContain("no tree step");
   });
@@ -267,7 +265,7 @@ describe("WorkflowTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
       return JSON.stringify(MESSAGES);
     });
-    const tab = new WorkflowTab(theme as any, notify);
+    const tab = new WorkflowTab(theme as any);
     tab.save();
     expect(writeFileSync).not.toHaveBeenCalled();
     expect(tab.getAboveContentLine(80)[0]).toContain("no tree step");
@@ -280,7 +278,7 @@ describe("WorkflowTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
       return JSON.stringify(MESSAGES);
     });
-    const tab = new WorkflowTab(theme as any, notify);
+    const tab = new WorkflowTab(theme as any);
     tab.handleInput("w");
     type(tab, "2");
     tab.handleInput("\r");
@@ -380,7 +378,7 @@ describe("WorkflowTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
       return JSON.stringify(MESSAGES);
     });
-    const tab = new WorkflowTab(theme as any, notify);
+    const tab = new WorkflowTab(theme as any);
     tab.handleInput("j");
     tab.handleInput("e");
     type(tab, "2");
@@ -395,7 +393,7 @@ describe("WorkflowTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify({ "1": "git add .", "2": "git status --porcelain" });
       return JSON.stringify(MESSAGES);
     });
-    const tab = new WorkflowTab(theme as any, notify);
+    const tab = new WorkflowTab(theme as any);
     tab.handleInput("a");
     type(tab, "cmd 2");
     tab.handleInput("\r");
@@ -433,7 +431,7 @@ describe("WorkflowTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
       return JSON.stringify(MESSAGES);
     });
-    const tab = new WorkflowTab(theme as any, notify);
+    const tab = new WorkflowTab(theme as any);
     for (let i = 0; i < 11; i++) tab.handleInput("j");
     tab.handleInput("J");
     expect(tab.draft.finally[0]).toEqual({ cmd: "1" });
@@ -452,7 +450,7 @@ describe("WorkflowTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
       return JSON.stringify(MESSAGES);
     });
-    const tab = new WorkflowTab(theme as any, notify);
+    const tab = new WorkflowTab(theme as any);
     tab.handleInput("j");
     tab.handleInput("t");
     expect(tab.draft.loop[0]).toEqual({ tree: "2" });
@@ -466,7 +464,7 @@ describe("WorkflowTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify({ "1": "git add .", "2": "git status --porcelain" });
       return JSON.stringify(MESSAGES);
     });
-    const tab = new WorkflowTab(theme as any, notify);
+    const tab = new WorkflowTab(theme as any);
     for (let i = 0; i < 11; i++) tab.handleInput("j");
     tab.handleInput("a");
     type(tab, "cmd 2");
@@ -565,7 +563,6 @@ describe("WorkflowTab", () => {
     expect(written["1"].finally).toEqual([{ msg: "8" }]);
     expect(written["2"]).toEqual(WORKFLOW_JSON["2"]);
     expect(tab.dirty).toBe(false);
-    expect(notify).toHaveBeenCalledWith("workflow.json saved", "info");
   });
 
   it("refuses to save when a referenced message is missing", () => {
@@ -834,14 +831,12 @@ describe("WorkflowTab", () => {
 
 describe("MessagesTab", () => {
   let theme: ReturnType<typeof createTheme>;
-  let notify: any;
   let tab: MessagesTab;
 
   beforeEach(() => {
     theme = createTheme();
-    notify = vi.fn();
     setupFs();
-    tab = new MessagesTab(theme as any, notify);
+    tab = new MessagesTab(theme as any);
   });
 
   afterEach(() => {
@@ -895,7 +890,7 @@ describe("MessagesTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
       return JSON.stringify({ "1": "first", "abc": "other" });
     });
-    const tab = new MessagesTab(theme as any, notify);
+    const tab = new MessagesTab(theme as any);
     tab.handleInput("a");
     type(tab, "Brand new message");
     tab.handleInput("\r");
@@ -919,7 +914,6 @@ describe("MessagesTab", () => {
     const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
     expect(written).toEqual(MESSAGES);
     expect(tab.dirty).toBe(false);
-    expect(notify).toHaveBeenCalledWith("messages.json saved", "info");
   });
 
   it("refuses to save when a message used by the workflow is deleted", () => {
@@ -1080,7 +1074,7 @@ describe("MessagesTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
       return JSON.stringify({ "1": "one two three four five six seven eight nine ten" });
     });
-    const tab = new MessagesTab(theme as any, notify);
+    const tab = new MessagesTab(theme as any);
     const lines = tab.render(30, 12);
     const content = lines.join("\n");
     expect(content).toContain("one two three");
@@ -1097,7 +1091,7 @@ describe("MessagesTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
       return JSON.stringify({ "1": "short", "2": long, "3": "tail" });
     });
-    const tab = new MessagesTab(theme as any, notify);
+    const tab = new MessagesTab(theme as any);
     tab.handleInput("j");
     tab.handleInput("j");
     const lines = tab.render(40, 6);
@@ -1110,7 +1104,7 @@ describe("MessagesTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
       return JSON.stringify(MESSAGES);
     });
-    const tab = new MessagesTab(theme as any, notify);
+    const tab = new MessagesTab(theme as any);
     const content = tab.render(80, 12).join("\n");
     expect(content).toContain("1*1: ");
     expect(content).toContain("3*1: ");
@@ -1125,7 +1119,7 @@ describe("MessagesTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
       return JSON.stringify({ ...MESSAGES, "9": "nine", "10": "ten", "11": "eleven", "12": "twelve", "13": "thirteen", "14": "fourteen", "15": "fifteen", "16": "sixteen", "17": "seventeen" });
     });
-    const tab = new MessagesTab(theme as any, notify);
+    const tab = new MessagesTab(theme as any);
     for (let i = 0; i < 16; i++) tab.handleInput("j");
     const content = tab.render(80, 12).join("\n");
     expect(content).toContain("9*2: ");
@@ -1139,7 +1133,7 @@ describe("MessagesTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
       return JSON.stringify({ ...MESSAGES, "9": "nine", "10": "ten", "11": "eleven", "12": "twelve", "13": "thirteen", "14": "fourteen", "15": "fifteen", "16": "sixteen", "17": "seventeen" });
     });
-    const tab = new MessagesTab(theme as any, notify);
+    const tab = new MessagesTab(theme as any);
     for (let i = 0; i < 8; i++) tab.handleInput("j");
     tab.handleInput("x");
     tab.save();
@@ -1150,14 +1144,12 @@ describe("MessagesTab", () => {
 
 describe("CommandsTab", () => {
   let theme: ReturnType<typeof createTheme>;
-  let notify: any;
   let tab: CommandsTab;
 
   beforeEach(() => {
     theme = createTheme();
-    notify = vi.fn();
     setupFs();
-    tab = new CommandsTab(theme as any, notify);
+    tab = new CommandsTab(theme as any);
   });
 
   afterEach(() => {
@@ -1215,7 +1207,6 @@ describe("CommandsTab", () => {
     const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
     expect(written).toEqual({ "1": "git add .", "2": "git status --porcelain" });
     expect(tab.dirty).toBe(false);
-    expect(notify).toHaveBeenCalledWith("commands.json saved", "info");
   });
 
   it("refuses to save when a command used by the workflow is deleted", () => {
@@ -1242,9 +1233,9 @@ describe("WorkflowEditorOverlay", () => {
     done = vi.fn();
     showOverlay = vi.fn(() => ({ hide: vi.fn(), focus: vi.fn() }));
     setupFs();
-    workflowTab = new WorkflowTab(theme as any, vi.fn() as any);
-    messagesTab = new MessagesTab(theme as any, vi.fn() as any);
-    commandsTab = new CommandsTab(theme as any, vi.fn() as any);
+    workflowTab = new WorkflowTab(theme as any);
+    messagesTab = new MessagesTab(theme as any);
+    commandsTab = new CommandsTab(theme as any);
     overlay = new WorkflowEditorOverlay({
       title: "Workflow Editor",
       tabs: [workflowTab, messagesTab, commandsTab],

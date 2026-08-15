@@ -20,8 +20,6 @@ export interface EditorTab {
   save(): void;
 }
 
-export type Notify = (text: string, kind: "info" | "warning" | "error") => void;
-
 interface InputState {
   prompt: string;
   buffer: string;
@@ -322,7 +320,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     return `Workflow ${this.index}`;
   }
 
-  constructor(private readonly theme: Theme, private readonly notify: Notify, index = "1") {
+  constructor(private readonly theme: Theme, index = "1") {
     super();
     this.draft = { rounds: 2, start: [], tree: "1", loop: [], finally: [] };
     const result = this.loadWorkflow(index);
@@ -401,7 +399,6 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       }
       this.loadWorkflow("1");
       this.popup(`Workflow ${deleted} deleted`);
-      this.notify(`workflow ${deleted} deleted`, "info");
       return null;
     });
   }
@@ -683,7 +680,6 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     this.savedSnapshot = this.snapshot();
     this.dirty = false;
     this.popup(`workflow.json saved (workflow ${this.index})`);
-    this.notify("workflow.json saved", "info");
   }
 
   render(innerWidth: number, height: number): string[] {
@@ -729,7 +725,6 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
 
   protected constructor(
     private readonly theme: Theme,
-    private readonly notify: Notify,
     readonly name: string,
     readonly footerHints: string,
   ) {
@@ -857,7 +852,6 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
     this.savedSnapshot = this.snapshot();
     this.dirty = false;
     this.popup(`${this.fileLabel} saved`);
-    this.notify(`${this.fileLabel} saved`, "info");
   }
 
   render(innerWidth: number, height: number): string[] {
@@ -909,8 +903,8 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
 }
 
 export class MessagesTab extends StoreTab {
-  constructor(theme: Theme, notify: Notify) {
-    super(theme, notify, "Messages", "j/k sel · e edit · a add · x del · u undo · s save");
+  constructor(theme: Theme) {
+    super(theme, "Messages", "j/k sel · e edit · a add · x del · u undo · s save");
   }
   protected load(): Record<string, string> {
     return getMessages();
@@ -926,8 +920,8 @@ export class MessagesTab extends StoreTab {
 }
 
 export class CommandsTab extends StoreTab {
-  constructor(theme: Theme, notify: Notify) {
-    super(theme, notify, "Commands", "j/k sel · e edit · a add · x del · u undo · s save");
+  constructor(theme: Theme) {
+    super(theme, "Commands", "j/k sel · e edit · a add · x del · u undo · s save");
   }
   protected load(): Record<string, string> {
     return getCommands();
