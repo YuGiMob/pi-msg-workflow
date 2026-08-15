@@ -11,6 +11,9 @@ export interface EditorTab {
   readonly name: string;
   dirty: boolean;
   readonly footerHints: string;
+  setPopup(callback: (text: string) => void): void;
+  setInputListener(listener: (active: boolean) => void): void;
+  getInputLines(width: number): string[] | null;
   handleInput(data: string): boolean;
   getAboveContentLine(innerWidth: number): string[];
   render(innerWidth: number, height: number): string[];
@@ -31,9 +34,10 @@ const CHROME_ROWS = 7;
 export const MAX_OVERLAY_HEIGHT_RATIO = 0.9;
 const FLASH_MS = 2500;
 const POPUP_MS = 5000;
-const MIN_CONSOLE_POPUP_WIDTH = 40;
-const MAX_CONSOLE_POPUP_WIDTH = 80;
-const MAX_CONSOLE_POPUP_LINES = 6;
+const MIN_POPUP_WIDTH = 40;
+const MAX_POPUP_WIDTH = 80;
+const MAX_POPUP_LINES = 6;
+const CONSOLE_POPUP_HINT = " console output · any key to dismiss";
 const PASTE_START = "\x1b[200~";
 const PASTE_END = "\x1b[201~";
 
@@ -135,8 +139,22 @@ abstract class BaseEditorTab implements EditorTab {
   dirty = false;
   protected flash: string | null = null;
   protected input: InputState | null = null;
+  private inputListener: ((active: boolean) => void) | null = null;
+  private popupCallback: ((text: string) => void) | null = null;
   private flashTimer: ReturnType<typeof setTimeout> | undefined;
   private undoStack: unknown[] = [];
+
+  setPopup(callback: (text: string) => void): void {
+    this.popupCallback = callback;
+  }
+
+  setInputListener(listener: (active: boolean) => void): void {
+    this.inputListener = listener;
+  }
+
+  protected popup(text: string): void {
+    this.popupCallback?.(text);
+  }
 
   protected setFlash(text: string): void {
     this.flash = text;
@@ -167,11 +185,17 @@ abstract class BaseEditorTab implements EditorTab {
     }
     restore(snap);
     this.dirty = !equalsSaved();
-    this.setFlash(this.dirty ? "Undone (press s to save)" : "Undone");
+    this.popup(this.dirty ? "Undone (press s to save)" : "Undone");
   }
 
   protected startInput(prompt: string, commit: (value: string) => string | null): void {
     this.input = { prompt, buffer: "", cursor: 0, commit };
+    this.inputListener?.(true);
+  }
+
+  private endInput(): void {
+    this.input = null;
+    this.inputListener?.(false);
   }
 
   protected mutate(fn: () => void): void {
@@ -193,7 +217,7 @@ abstract class BaseEditorTab implements EditorTab {
   protected handleInputMode(data: string): boolean {
     if (!this.input) return false;
     if (matchesKey(data, Key.escape)) {
-      this.input = null;
+      this.endInput();
       return true;
     }
     if (matchesKey(data, Key.enter)) {
@@ -201,7 +225,7 @@ abstract class BaseEditorTab implements EditorTab {
       if (error !== null) {
         this.setFlash(error);
       } else {
-        this.input = null;
+        this.endInput();
       }
       return true;
     }
@@ -259,8 +283,12 @@ abstract class BaseEditorTab implements EditorTab {
   getAboveContentLine(innerWidth: number): string[] {
     const lines: string[] = [];
     if (this.flash) lines.push(truncate(` ${this.flash}`, innerWidth));
-    if (this.input) lines.push(...wrapCells(` ${this.input.prompt}${this.input.buffer.slice(0, this.input.cursor)}▏${this.input.buffer.slice(this.input.cursor)}`, innerWidth));
     return lines;
+  }
+
+  getInputLines(width: number): string[] | null {
+    if (!this.input) return null;
+    return wrapCells(` ${this.input.prompt}${this.input.buffer.slice(0, this.input.cursor)}▏${this.input.buffer.slice(this.input.cursor)}`, width);
   }
 
   abstract handleInput(data: string): boolean;
@@ -350,7 +378,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
         this.setFlash(result.flash);
         return null;
       }
-      this.setFlash(result.flash ?? (exists ? `Editing workflow ${index}` : `Workflow ${index} is new - press s to create it`));
+      this.popup(result.flash ?? (exists ? `Editing workflow ${index}` : `Workflow ${index} is new - press s to create it`));
       return null;
     });
   }
@@ -372,7 +400,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
         return null;
       }
       this.loadWorkflow("1");
-      this.setFlash(`Workflow ${deleted} deleted`);
+      this.popup(`Workflow ${deleted} deleted`);
       this.notify(`workflow ${deleted} deleted`, "info");
       return null;
     });
@@ -476,11 +504,17 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       return true;
     }
     if (matchesKey(data, "[")) {
-      if (this.draft.rounds > 1) this.mutate(() => { this.draft.rounds -= 1; });
+      if (this.draft.rounds > 1) {
+        this.mutate(() => { this.draft.rounds -= 1; });
+        this.popup(`Rounds: ${this.draft.rounds} - press s to save`);
+      }
       return true;
     }
     if (matchesKey(data, "]")) {
-      if (this.draft.rounds < MAX_ROUNDS) this.mutate(() => { this.draft.rounds += 1; });
+      if (this.draft.rounds < MAX_ROUNDS) {
+        this.mutate(() => { this.draft.rounds += 1; });
+        this.popup(`Rounds: ${this.draft.rounds} - press s to save`);
+      }
       return true;
     }
     if (matchesKey(data, "s")) {
@@ -497,6 +531,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     }, (value) => {
       const step = target[position]!;
       target[position] = action === "msg" ? { ...step, msg: value } : { ...step, cmd: value };
+      this.popup("Step updated - press s to save");
     });
   }
 
@@ -507,6 +542,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
         return isNumericString(value) ? null : "Index must be a number.";
       }, (value) => {
         this.draft.tree = value;
+        this.popup("Tree anchor updated - press s to save");
       });
       return;
     }
@@ -521,6 +557,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
         return isNumericString(value) ? null : "Index must be a number.";
       }, (value) => {
         target[position] = { ...step, tree: value };
+        this.popup("Step updated - press s to save");
       });
     }
   }
@@ -532,6 +569,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       const match = value.match(/^(msg|cmd)\s+(\d+)$/)!;
       target.push(match[1] === "msg" ? { msg: match[2]! } : { cmd: match[2]! });
       select();
+      this.popup("Step added - press s to save");
     });
   }
 
@@ -572,7 +610,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       }
       this.selection = Math.min(this.selection, this.rowCount() - 1);
     });
-    this.setFlash("Deleted (press s to save)");
+    this.popup("Step deleted - press s to save");
   }
 
   private swapRows(target: LoopStep[], position: number, delta: number): boolean {
@@ -593,6 +631,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     this.pushUndo(snap);
     this.selection += delta;
     this.dirty = true;
+    this.popup("Step moved - press s to save");
   }
 
   private toggleIfChanges(kind: SelectableKind, position: number): void {
@@ -612,6 +651,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
         this.draft.loop[position] = { ...step, onlyIfChanges: true };
       }
     });
+    this.popup("if-changes toggled - press s to save");
   }
 
   save(): void {
@@ -642,7 +682,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     }
     this.savedSnapshot = this.snapshot();
     this.dirty = false;
-    this.setFlash(`workflow.json saved (workflow ${this.index})`);
+    this.popup(`workflow.json saved (workflow ${this.index})`);
     this.notify("workflow.json saved", "info");
   }
 
@@ -772,6 +812,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
       return value.length >= 5 ? null : `${this.noun} must be at least 5 characters.`;
     }, (value) => {
       this.draft[key] = value;
+      this.popup(`${this.noun} ${key} updated - press s to save`);
     });
   }
 
@@ -784,18 +825,19 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
       this.keys.push(key);
       this.keys.sort(compareNumericKeys);
       this.selection = this.keys.indexOf(key);
+      this.popup(`${this.noun} ${key} added - press s to save`);
     });
   }
 
   private deleteSelected(): void {
     if (this.keys.length === 0) return;
+    const key = this.keys[this.selection]!;
     this.mutate(() => {
-      const key = this.keys[this.selection]!;
       delete this.draft[key];
       this.keys.splice(this.selection, 1);
       this.selection = Math.min(this.selection, Math.max(0, this.keys.length - 1));
     });
-    this.setFlash("Deleted (press s to save)");
+    this.popup(`${this.noun} ${key} deleted - press s to save`);
   }
 
   save(): void {
@@ -814,7 +856,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
     }
     this.savedSnapshot = this.snapshot();
     this.dirty = false;
-    this.setFlash(`${this.fileLabel} saved`);
+    this.popup(`${this.fileLabel} saved`);
     this.notify(`${this.fileLabel} saved`, "info");
   }
 
@@ -934,7 +976,30 @@ class Popup {
     const row = (content: string) => th.fg("border", "│") + pad(content) + th.fg("border", "│");
     const lines = [th.fg("border", `╭${"─".repeat(innerW)}╮`)];
     for (const line of this.lines) lines.push(row(line));
-    lines.push(row(th.fg("dim", this.hint)));
+    if (this.hint !== "") lines.push(row(th.fg("dim", this.hint)));
+    lines.push(th.fg("border", `╰${"─".repeat(innerW)}╯`));
+    return lines;
+  }
+}
+
+class InputPopup {
+  constructor(
+    private readonly theme: Theme,
+    private readonly getLines: (width: number) => string[],
+  ) {}
+
+  handleInput(_data: string): void {}
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    const th = this.theme;
+    const innerW = width - 2;
+    const pad = (text: string) => text + " ".repeat(Math.max(0, innerW - visibleWidth(text)));
+    const row = (content: string) => th.fg("border", "│") + pad(content) + th.fg("border", "│");
+    const lines = [th.fg("border", `╭${"─".repeat(innerW)}╮`)];
+    for (const line of this.getLines(innerW - 2)) lines.push(row(th.fg("text", line)));
+    lines.push(row(th.fg("dim", " Enter to confirm · Esc to cancel")));
     lines.push(th.fg("border", `╰${"─".repeat(innerW)}╯`));
     return lines;
   }
@@ -944,12 +1009,21 @@ export class WorkflowEditorOverlay {
   private activeTab = 0;
   private confirmPopupHandle: OverlayHandle | undefined;
   private confirmPopupTimer: ReturnType<typeof setTimeout> | undefined;
-  private consoleQueue: string[] = [];
-  private consolePopupText: string | null = null;
-  private consolePopupHandle: OverlayHandle | undefined;
-  private consolePopupTimer: ReturnType<typeof setTimeout> | undefined;
+  private popupQueue: string[] = [];
+  private popupText: string | null = null;
+  private popupHandle: OverlayHandle | undefined;
+  private popupTimer: ReturnType<typeof setTimeout> | undefined;
+  private inputPopupHandle: OverlayHandle | undefined;
 
-  constructor(private readonly opts: WorkflowEditorOverlayOptions) {}
+  constructor(private readonly opts: WorkflowEditorOverlayOptions) {
+    for (const tab of opts.tabs) {
+      tab.setPopup((text) => this.showPopup(text));
+      tab.setInputListener((active) => {
+        if (active) this.showInputPopup();
+        else this.hideInputPopup();
+      });
+    }
+  }
 
   private get active(): EditorTab {
     return this.opts.tabs[this.activeTab]!;
@@ -966,52 +1040,79 @@ export class WorkflowEditorOverlay {
 
   private close(): void {
     this.hideConfirmPopup();
-    this.consoleQueue.length = 0;
-    this.hideConsolePopup();
+    this.hideInputPopup();
+    this.popupQueue.length = 0;
+    this.hidePopup();
     this.opts.done();
   }
 
+  private showInputPopup(): void {
+    if (this.inputPopupHandle) return;
+    const popup = new InputPopup(this.opts.theme, (width) => this.active.getInputLines(width) ?? []);
+    this.inputPopupHandle = this.opts.tui.showOverlay(popup, {
+      anchor: "center",
+      width: "70%",
+      minWidth: 50,
+      nonCapturing: true,
+    });
+  }
+
+  private hideInputPopup(): void {
+    this.inputPopupHandle?.hide();
+    this.inputPopupHandle = undefined;
+  }
+
   showConsolePopup(text: string): void {
-    if (text === "" || text === this.consolePopupText || this.consoleQueue.includes(text)) return;
-    if (this.consolePopupHandle !== undefined) {
-      this.consoleQueue.push(text);
+    if (text === "" || text === this.popupText || this.popupQueue.includes(text)) return;
+    if (this.popupHandle !== undefined) {
+      this.popupQueue.push(text);
       return;
     }
-    this.showConsolePopupNow(text);
+    this.showPopupNow(text, CONSOLE_POPUP_HINT, true);
+  }
+
+  showPopup(text: string, hint = "", capturing = false): void {
+    this.dismissPopup();
+    this.showPopupNow(text, hint, capturing);
   }
 
   bringConsolePopupToFront(): void {
-    this.consolePopupHandle?.focus();
+    this.popupHandle?.focus();
   }
 
-  private showConsolePopupNow(text: string): void {
-    this.consolePopupText = text;
-    const width = Math.min(MAX_CONSOLE_POPUP_WIDTH, Math.max(MIN_CONSOLE_POPUP_WIDTH, visibleWidth(text) + 10));
+  private showPopupNow(text: string, hint: string, capturing: boolean): void {
+    this.popupText = text;
+    const width = Math.min(MAX_POPUP_WIDTH, Math.max(MIN_POPUP_WIDTH, visibleWidth(text) + 10));
     const wrapped = wrapText(text, Math.max(1, width - 3)).map((line) => ` ${line}`);
-    const content = wrapped.length > MAX_CONSOLE_POPUP_LINES ? [...wrapped.slice(0, MAX_CONSOLE_POPUP_LINES), " …"] : wrapped;
+    const content = wrapped.length > MAX_POPUP_LINES ? [...wrapped.slice(0, MAX_POPUP_LINES), " …"] : wrapped;
     const popup = new Popup(
       this.opts.theme,
       content.map((line) => this.opts.theme.fg("warning", line)),
-      " console output · any key to dismiss",
-      () => this.hideConsolePopup(),
+      hint,
+      () => this.hidePopup(),
     );
-    this.consolePopupHandle = this.opts.tui.showOverlay(popup, {
+    this.popupHandle = this.opts.tui.showOverlay(popup, {
       anchor: "center",
       width,
+      nonCapturing: !capturing,
     });
-    this.consolePopupTimer = setTimeout(() => this.hideConsolePopup(), POPUP_MS);
+    this.popupTimer = setTimeout(() => this.hidePopup(), POPUP_MS);
   }
 
-  private hideConsolePopup(): void {
-    if (this.consolePopupTimer) {
-      clearTimeout(this.consolePopupTimer);
-      this.consolePopupTimer = undefined;
+  private dismissPopup(): void {
+    if (this.popupTimer) {
+      clearTimeout(this.popupTimer);
+      this.popupTimer = undefined;
     }
-    this.consolePopupHandle?.hide();
-    this.consolePopupHandle = undefined;
-    this.consolePopupText = null;
-    const next = this.consoleQueue.shift();
-    if (next !== undefined) this.showConsolePopupNow(next);
+    this.popupHandle?.hide();
+    this.popupHandle = undefined;
+    this.popupText = null;
+  }
+
+  private hidePopup(): void {
+    this.dismissPopup();
+    const next = this.popupQueue.shift();
+    if (next !== undefined) this.showPopupNow(next, CONSOLE_POPUP_HINT, true);
   }
 
   private showConfirmPopup(): void {

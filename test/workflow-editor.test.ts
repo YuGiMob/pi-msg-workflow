@@ -235,13 +235,15 @@ describe("WorkflowTab", () => {
       if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
       return JSON.stringify(MESSAGES);
     });
+    const popup = vi.fn();
+    tab.setPopup(popup);
     tab.handleInput("w");
     type(tab, "2");
     tab.handleInput("\r");
     expect((tab as any).index).toBe("2");
     expect(tab.draft.tree).toBe("1");
     expect(tab.draft.loop).toEqual([{ msg: "6" }]);
-    expect(tab.getAboveContentLine(80)[0]).toContain("moved to the start of the loop");
+    expect(popup).toHaveBeenCalledWith(expect.stringContaining("moved to the start of the loop"));
   });
 
   it("keeps the current workflow when the target has no tree step", () => {
@@ -749,6 +751,8 @@ describe("WorkflowTab", () => {
   });
 
   it("creates a new workflow by switching to an unused number", () => {
+    const popup = vi.fn();
+    tab.setPopup(popup);
     tab.handleInput("w");
     type(tab, "7");
     tab.handleInput("\r");
@@ -756,7 +760,7 @@ describe("WorkflowTab", () => {
     expect(tab.draft.start).toEqual([{ msg: "1" }, { msg: "2" }, { msg: "3" }, { msg: "4" }, { msg: "5" }]);
     expect(tab.draft.loop[0]).toEqual({ cmd: "1" });
     expect(tab.draft.tree).toBe("1");
-    expect(tab.getAboveContentLine(80)[0]).toContain("press s to create it");
+    expect(popup).toHaveBeenCalledWith(expect.stringContaining("press s to create it"));
   });
 
   it("rejects a non-numeric workflow number", () => {
@@ -871,7 +875,7 @@ describe("MessagesTab", () => {
     tab.handleInput("\r");
     expect(tab.draft["1"]).toBe(MSG1);
     expect(tab.getAboveContentLine(80)[0]).toContain("at least 5 characters");
-    expect(tab.getAboveContentLine(80)[1]).toContain("content for message 1");
+    expect(tab.getInputLines(80)![0]).toContain("content for message 1");
     type(tab, "cde");
     tab.handleInput("\r");
     expect(tab.draft["1"]).toBe("abcde");
@@ -954,7 +958,7 @@ describe("MessagesTab", () => {
     tab.handleInput("a");
     const pasted = "x".repeat(200);
     tab.handleInput(`\x1b[200~${pasted}\x1b[201~`);
-    const lines = tab.getAboveContentLine(80);
+    const lines = tab.getInputLines(80)!;
     expect(lines.length).toBeGreaterThan(1);
     expect(lines.join("")).toContain(pasted);
     expect(lines[lines.length - 1]!.endsWith("▏")).toBe(true);
@@ -966,7 +970,7 @@ describe("MessagesTab", () => {
     tab.handleInput("a");
     tab.handleInput(`\x1b[200~${"x".repeat(100)}${"y".repeat(100)}\x1b[201~`);
     tab.handleInput("\x1b[H");
-    const lines = tab.getAboveContentLine(80);
+    const lines = tab.getInputLines(80)!;
     const joined = lines.join("");
     expect(joined).toContain("▏");
     expect(joined).toContain("x".repeat(100) + "y".repeat(100));
@@ -977,7 +981,7 @@ describe("MessagesTab", () => {
   it("keeps a short input line on a single line", () => {
     tab.handleInput("a");
     tab.handleInput("\x1b[200~short content\x1b[201~");
-    const lines = tab.getAboveContentLine(80);
+    const lines = tab.getInputLines(80)!;
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("short content▏");
     expect(lines[0]).not.toContain("…");
@@ -1007,7 +1011,7 @@ describe("MessagesTab", () => {
     type(tab, "abcdefg");
     tab.handleInput("\x1b[H");
     tab.handleInput("\x1b[3~");
-    expect(tab.getAboveContentLine(80)[0]).toContain("▏bcdefg");
+    expect(tab.getInputLines(80)![0]).toContain("▏bcdefg");
     tab.handleInput("\x1b[F");
     tab.handleInput("\x7f");
     tab.handleInput("\r");
@@ -1017,7 +1021,7 @@ describe("MessagesTab", () => {
     tab.handleInput("e");
     type(tab, "ab");
     tab.handleInput("\x1b[D");
-    expect(tab.getAboveContentLine(80)[0]).toContain("a▏b");
+    expect(tab.getInputLines(80)![0]).toContain("a▏b");
   });
   it("undoes a deleted message", () => {
     tab.handleInput("x");
@@ -1303,12 +1307,12 @@ describe("WorkflowEditorOverlay", () => {
     workflowTab.handleInput("9");
     workflowTab.handleInput("\r");
     overlay.handleInput("q");
-    expect(showOverlay).toHaveBeenCalledTimes(1);
+    expect(showOverlay).toHaveBeenCalledTimes(3);
     expect(done).not.toHaveBeenCalled();
-    const popup = showOverlay.mock.calls[0]![0];
+    const popup = showOverlay.mock.calls[2]![0];
     const lines = popup.render(50);
     expect(lines.join("\n")).toContain("Unsaved changes - press q again to close");
-    expect(showOverlay.mock.calls[0]![1]).toMatchObject({ anchor: "center" });
+    expect(showOverlay.mock.calls[2]![1]).toMatchObject({ anchor: "center" });
   });
 
   it("closes the editor when q is pressed on the confirm popup", () => {
@@ -1316,10 +1320,10 @@ describe("WorkflowEditorOverlay", () => {
     workflowTab.handleInput("9");
     workflowTab.handleInput("\r");
     overlay.handleInput("q");
-    const popup = showOverlay.mock.calls[0]![0];
+    const popup = showOverlay.mock.calls[2]![0];
     popup.handleInput("q");
     expect(done).toHaveBeenCalled();
-    expect(showOverlay.mock.results[0]!.value.hide).toHaveBeenCalled();
+    expect(showOverlay.mock.results[2]!.value.hide).toHaveBeenCalled();
   });
 
   it("dismisses the confirm popup on any other key", () => {
@@ -1327,10 +1331,10 @@ describe("WorkflowEditorOverlay", () => {
     workflowTab.handleInput("9");
     workflowTab.handleInput("\r");
     overlay.handleInput("q");
-    const popup = showOverlay.mock.calls[0]![0];
+    const popup = showOverlay.mock.calls[2]![0];
     popup.handleInput("j");
     expect(done).not.toHaveBeenCalled();
-    expect(showOverlay.mock.results[0]!.value.hide).toHaveBeenCalled();
+    expect(showOverlay.mock.results[2]!.value.hide).toHaveBeenCalled();
   });
 
   it("dismisses the confirm popup on escape instead of closing", () => {
@@ -1338,10 +1342,10 @@ describe("WorkflowEditorOverlay", () => {
     workflowTab.handleInput("9");
     workflowTab.handleInput("\r");
     overlay.handleInput("q");
-    const popup = showOverlay.mock.calls[0]![0];
+    const popup = showOverlay.mock.calls[2]![0];
     popup.handleInput("\x1b");
     expect(done).not.toHaveBeenCalled();
-    expect(showOverlay.mock.results[0]!.value.hide).toHaveBeenCalled();
+    expect(showOverlay.mock.results[2]!.value.hide).toHaveBeenCalled();
   });
 
   it("auto-dismisses the confirm popup after 5 seconds", () => {
@@ -1352,7 +1356,7 @@ describe("WorkflowEditorOverlay", () => {
       workflowTab.handleInput("\r");
       overlay.handleInput("q");
       vi.advanceTimersByTime(5000);
-      expect(showOverlay.mock.results[0]!.value.hide).toHaveBeenCalled();
+      expect(showOverlay.mock.results[2]!.value.hide).toHaveBeenCalled();
       expect(done).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
@@ -1399,6 +1403,90 @@ describe("WorkflowEditorOverlay", () => {
   it("does nothing when no console popup is showing", () => {
     overlay.bringConsolePopupToFront();
     expect(showOverlay).not.toHaveBeenCalled();
+  });
+
+  it("shows an input popup when a message is edited and a confirmation popup on commit", () => {
+    overlay.handleInput("\t");
+    overlay.handleInput("e");
+    expect(showOverlay).toHaveBeenCalledTimes(1);
+    expect(showOverlay.mock.calls[0]![1]).toMatchObject({ nonCapturing: true });
+    const inputPopup = showOverlay.mock.calls[0]![0];
+    expect(inputPopup.render(60).join("\n")).toContain("content for message 1");
+    expect(inputPopup.render(60).join("\n")).toContain("▏");
+    type(messagesTab, "New content here");
+    expect(inputPopup.render(60).join("\n")).toContain("New content here▏");
+    messagesTab.handleInput("\r");
+    expect(showOverlay).toHaveBeenCalledTimes(2);
+    expect(showOverlay.mock.results[0]!.value.hide).toHaveBeenCalled();
+    const lines = showOverlay.mock.calls[1]![0].render(60).join("\n");
+    expect(lines).toContain("Message 1 updated - press s to save");
+    expect(lines).not.toContain("any key");
+  });
+
+  it("shows a popup when a message is added", () => {
+    overlay.handleInput("\t");
+    overlay.handleInput("a");
+    type(messagesTab, "Brand new message");
+    messagesTab.handleInput("\r");
+    expect(showOverlay.mock.calls[1]![0].render(60).join("\n")).toContain("Message 9 added - press s to save");
+  });
+
+  it("hides the input popup when editing is cancelled with escape", () => {
+    overlay.handleInput("\t");
+    overlay.handleInput("e");
+    expect(showOverlay).toHaveBeenCalledTimes(1);
+    type(messagesTab, "New content here");
+    messagesTab.handleInput("\x1b");
+    expect(messagesTab.draft["1"]).toBe(MSG1);
+    expect(messagesTab.dirty).toBe(false);
+    expect(showOverlay.mock.results[0]!.value.hide).toHaveBeenCalled();
+    expect(showOverlay).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an input popup when switching workflows", () => {
+    overlay.handleInput("w");
+    expect(showOverlay).toHaveBeenCalledTimes(1);
+    const inputPopup = showOverlay.mock.calls[0]![0];
+    expect(inputPopup.render(60).join("\n")).toContain("workflow number");
+    type(workflowTab, "2");
+    workflowTab.handleInput("\r");
+    expect(workflowTab.name).toBe("Workflow 2");
+    expect(showOverlay).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a popup when a message is deleted", () => {
+    overlay.handleInput("\t");
+    overlay.handleInput("x");
+    expect(showOverlay.mock.calls[0]![0].render(60).join("\n")).toContain("Message 1 deleted - press s to save");
+  });
+
+  it("shows a popup when a step is deleted", () => {
+    overlay.handleInput("x");
+    expect(showOverlay.mock.calls[0]![0].render(60).join("\n")).toContain("Step deleted - press s to save");
+  });
+
+  it("shows a popup when rounds change", () => {
+    overlay.handleInput("]");
+    expect(showOverlay.mock.calls[0]![0].render(60).join("\n")).toContain("Rounds: 3 - press s to save");
+  });
+
+  it("shows a popup when the workflow is saved", () => {
+    overlay.handleInput("s");
+    expect(showOverlay.mock.calls[0]![0].render(60).join("\n")).toContain("workflow.json saved (workflow 1)");
+  });
+
+  it("replaces the current popup when another action completes", () => {
+    overlay.handleInput("]");
+    expect(showOverlay).toHaveBeenCalledTimes(1);
+    overlay.handleInput("u");
+    expect(showOverlay).toHaveBeenCalledTimes(2);
+    expect(showOverlay.mock.results[0]!.value.hide).toHaveBeenCalled();
+    expect(showOverlay.mock.calls[1]![0].render(60).join("\n")).toContain("Undone");
+  });
+
+  it("keeps the console popup capturing keyboard focus", () => {
+    overlay.showConsolePopup("boom");
+    expect(showOverlay.mock.calls[0]![1]).toMatchObject({ nonCapturing: false });
   });
 
   it("auto-dismisses the console popup after 5 seconds", () => {
