@@ -4,9 +4,9 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readJsonObject, writeJsonAtomic } from "./json-file.js";
+import { DEFAULTS_FILE } from "./constants.js";
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const DEFAULTS_FILE = "defaults.json";
 
 function homeBase(): string {
   const envHome = process.env.HOME;

@@ -300,6 +300,7 @@ interface WorkflowDraft {
   tree: string;
   loop: LoopStep[];
   finally: LoopStep[];
+  finallyOnError: boolean;
 }
 
 type WorkflowSnapshot = WorkflowDraft & { selection: number };
@@ -310,7 +311,7 @@ type SelectableKind = "start" | "tree" | "loop" | "finally";
 type LoadResult = { ok: true; flash?: string } | { ok: false; flash: string };
 export class WorkflowTab extends BaseEditorTab implements EditorTab {
   private index = "1";
-  readonly footerHints = "j/k sel · e edit · a add · x del · d del-wf · J/K move · t if-chg · [ ] rnds · w switch · u undo · s save";
+  readonly footerHints = "j/k sel · e edit · a add · x del · d del-wf · J/K move · t if-chg · [ ] rnds · f fin-err · w switch · u undo · s save";
   readonly draft: WorkflowDraft;
   private selection = 0;
   private savedSnapshot: WorkflowSnapshot;
@@ -322,7 +323,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
 
   constructor(private readonly theme: Theme, index = "1") {
     super();
-    this.draft = { rounds: 2, start: [], tree: "1", loop: [], finally: [] };
+    this.draft = { rounds: 2, start: [], tree: "1", loop: [], finally: [], finallyOnError: false };
     const result = this.loadWorkflow(index);
     if (result.flash !== undefined) this.setFlash(result.flash);
     this.savedSnapshot = this.snapshot();
@@ -350,6 +351,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     this.loadFailedIndex = null;
     this.index = index;
     this.draft.rounds = config.rounds;
+    this.draft.finallyOnError = config.finallyOnError === true;
     this.draft.start = config.start.map((step) => ({ ...step }));
     this.draft.tree = tree;
     this.draft.loop = loop.map((step) => ({ ...step }));
@@ -410,6 +412,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       tree: this.draft.tree,
       loop: this.draft.loop.map((step) => ({ ...step })),
       finally: this.draft.finally.map((step) => ({ ...step })),
+      finallyOnError: this.draft.finallyOnError,
       selection: this.selection,
     };
   }
@@ -419,6 +422,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     this.draft.tree = snap.tree;
     this.draft.loop = snap.loop;
     this.draft.finally = snap.finally;
+    this.draft.finallyOnError = snap.finallyOnError;
     this.selection = Math.min(snap.selection, this.rowCount() - 1);
   }
   private equalsSaved(): boolean {
@@ -427,7 +431,8 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       && current.tree === this.savedSnapshot.tree
       && deepEqual(current.start, this.savedSnapshot.start)
       && deepEqual(current.loop, this.savedSnapshot.loop)
-      && deepEqual(current.finally, this.savedSnapshot.finally);
+      && deepEqual(current.finally, this.savedSnapshot.finally)
+      && current.finallyOnError === this.savedSnapshot.finallyOnError;
   }
   private undo(): void {
     this.performUndo((snap) => this.restore(snap as WorkflowSnapshot), () => this.equalsSaved());
@@ -512,6 +517,11 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
         this.mutate(() => { this.draft.rounds += 1; });
         this.popup(`Rounds: ${this.draft.rounds} - press s to save`);
       }
+      return true;
+    }
+    if (matchesKey(data, "f")) {
+      this.mutate(() => { this.draft.finallyOnError = !this.draft.finallyOnError; });
+      this.popup(`finallyOnError ${this.draft.finallyOnError ? "enabled" : "disabled"} - press s to save`);
       return true;
     }
     if (matchesKey(data, "s")) {
@@ -661,6 +671,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       start: [...this.draft.start],
       loop: [{ tree: this.draft.tree }, ...this.draft.loop.map((step) => ({ ...step }))],
       finally: this.draft.finally.map((step) => ({ ...step })),
+      finallyOnError: this.draft.finallyOnError || undefined,
     };
     const { messages, commands } = missingReferences(config, getMessages(), getCommands());
     if (messages.length > 0) {
@@ -703,7 +714,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
         }
       });
     };
-    lines.push(th.fg("dim", ` Workflow ${this.index} · Rounds: ${this.draft.rounds}   ([ ] change · w switch)`));
+    lines.push(th.fg("dim", truncate(` Workflow ${this.index} · Rounds: ${this.draft.rounds} · fin-err: ${this.draft.finallyOnError ? "on" : "off"}   ([ ] change · f toggle · w switch)`, innerWidth)));
     lines.push(th.fg("dim", " start"));
     renderSteps(this.draft.start, (i) => this.selection === i);
     lines.push(th.fg("dim", " loop"));

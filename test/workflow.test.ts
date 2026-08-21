@@ -364,6 +364,42 @@ describe("workflow extension", () => {
     expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
   });
 
+  it("runs the finally phase on failure when finallyOnError is enabled", async () => {
+    holder.workflow = { "1": { rounds: 1, start: [{ msg: "1" }, { cmd: "1" }], loop: [{ tree: "1" }], finally: [{ msg: "8" }], finallyOnError: true } };
+    pi.exec = vi.fn(async () => ({ code: 1, stdout: "", stderr: "boom" }));
+    const ctx = createCtx([]);
+    await commands["workflow"].handler("", ctx);
+    const sent = pi.sendUserMessage.mock.calls.map((c: any[]) => c[0]);
+    expect(sent).toEqual([MSG1, MSG8]);
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Command 1 failed: boom", "error");
+  });
+
+  it("skips the finally phase on failure by default", async () => {
+    holder.workflow = { "1": { rounds: 1, start: [{ msg: "1" }, { cmd: "1" }], loop: [{ tree: "1" }], finally: [{ msg: "8" }] } };
+    pi.exec = vi.fn(async () => ({ code: 1, stdout: "", stderr: "boom" }));
+    const ctx = createCtx([]);
+    await commands["workflow"].handler("", ctx);
+    const sent = pi.sendUserMessage.mock.calls.map((c: any[]) => c[0]);
+    expect(sent).toEqual([MSG1]);
+  });
+
+  it("does not run the finally phase on stop even with finallyOnError", async () => {
+    vi.useFakeTimers();
+    try {
+      holder.workflow = { "1": { rounds: 1, start: [{ msg: "1" }], loop: [{ tree: "1" }], finally: [{ msg: "8" }], finallyOnError: true } };
+      blockSendsOf(MSG1);
+      const ctx = createCtx([]);
+      const handlerPromise = commands["workflow"].handler("", ctx);
+      await vi.advanceTimersByTimeAsync(100);
+      await commands["workflow-stop"].handler("", ctx);
+      await vi.advanceTimersByTimeAsync(100);
+      await handlerPromise;
+      expect(pi.sendUserMessage).not.toHaveBeenCalledWith(MSG8, { deliverAs: "followUp" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("aborts when a start command is missing", async () => {
     holder.workflow = { "1": { rounds: 1, start: [{ cmd: "99" }], loop: [{ tree: "1" }] } };
     const ctx = createCtx([]);
@@ -1276,6 +1312,26 @@ describe("getWorkflowConfig", () => {
     const { config, errors } = getWorkflowConfig();
     expect(config.rounds).toBe(2);
     expect(errors.some((e) => e.includes("rounds"))).toBe(true);
+  });
+
+  it("accepts finallyOnError", () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReturnValue(
+      JSON.stringify({ "1": { rounds: 1, start: [], loop: [{ tree: "1" }], finally: [], finallyOnError: true } }) as never,
+    );
+    const { config, errors } = getWorkflowConfig();
+    expect(config.finallyOnError).toBe(true);
+    expect(errors).toEqual([]);
+  });
+
+  it("rejects a non-boolean finallyOnError", () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReturnValue(
+      JSON.stringify({ "1": { rounds: 1, start: [], loop: [{ tree: "1" }], finally: [], finallyOnError: "yes" } }) as never,
+    );
+    const { config, errors } = getWorkflowConfig();
+    expect(config.finallyOnError).toBe(false);
+    expect(errors.some((e) => e.includes("finallyOnError"))).toBe(true);
   });
 
   it("skips invalid loop steps", () => {

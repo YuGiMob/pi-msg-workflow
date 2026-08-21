@@ -548,6 +548,42 @@ describe("WorkflowTab", () => {
     expect(tab.draft.rounds).toBe(1);
   });
 
+  it("loads finallyOnError from the config", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 2, start: [], loop: [{ tree: "1" }], finally: [], finallyOnError: true } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any);
+    expect(tab.draft.finallyOnError).toBe(true);
+  });
+
+  it("toggles finallyOnError", () => {
+    tab.handleInput("f");
+    expect(tab.draft.finallyOnError).toBe(true);
+    expect(tab.dirty).toBe(true);
+    tab.handleInput("f");
+    expect(tab.draft.finallyOnError).toBe(false);
+  });
+
+  it("undoes a finallyOnError toggle", () => {
+    tab.handleInput("f");
+    tab.handleInput("u");
+    expect(tab.draft.finallyOnError).toBe(false);
+    expect(tab.dirty).toBe(false);
+  });
+
+  it("saves finallyOnError when enabled and omits it when disabled", () => {
+    tab.handleInput("f");
+    tab.save();
+    const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
+    expect(written["1"].finallyOnError).toBe(true);
+    tab.handleInput("f");
+    tab.save();
+    const writtenAgain = JSON.parse((writeFileSync as any).mock.calls[1]![1]);
+    expect(writtenAgain["1"].finallyOnError).toBeUndefined();
+  });
+
   it("saves the workflow to workflow.json", () => {
     for (let i = 0; i < 5; i++) tab.handleInput("j");
     tab.handleInput("e");

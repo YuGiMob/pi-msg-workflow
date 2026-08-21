@@ -1,6 +1,6 @@
 import { errorMessage } from "./errors.js";
 import { compareNumericKeys, readJsonFile, readJsonObject, writeJsonAtomic } from "./json-file.js";
-import { MAX_ROUNDS } from "./constants.js";
+import { MAX_ROUNDS, WORKFLOW_FILE } from "./constants.js";
 import { ensureUserData, ensureUserDataDir, userDataPath } from "./user-data.js";
 
 export interface LoopStep {
@@ -20,9 +20,10 @@ export interface WorkflowConfig {
   start: StartStep[];
   loop: LoopStep[];
   finally: StartStep[];
+  finallyOnError?: boolean;
 }
 
-const WORKFLOW_FILE = userDataPath("workflow.json");
+const WORKFLOW_PATH = userDataPath(WORKFLOW_FILE);
 
 const DEFAULT_ROUNDS = 2;
 const DEFAULT_START: StartStep[] = [
@@ -106,6 +107,15 @@ function parseConfig(input: Record<string, unknown>, errors: string[], label: st
     }
   }
 
+  let finallyOnError = false;
+  if (input.finallyOnError !== undefined) {
+    if (typeof input.finallyOnError === "boolean") {
+      finallyOnError = input.finallyOnError;
+    } else {
+      errors.push(`${tag}Invalid finallyOnError "${String(input.finallyOnError)}" - defaulting to false.`);
+    }
+  }
+
   const start = parseStartSteps(input, errors, tag, "start", DEFAULT_START);
   const finallySteps = parseStartSteps(input, errors, tag, "finally", DEFAULT_FINALLY);
 
@@ -133,7 +143,7 @@ function parseConfig(input: Record<string, unknown>, errors: string[], label: st
   if (loop[0]?.tree === undefined) {
     errors.push(`${tag}The first step of the loop must be a tree step (context reset).`);
   }
-  return { rounds, start, loop, finally: finallySteps };
+  return { rounds, start, loop, finally: finallySteps, finallyOnError };
 }
 
 function isSingleConfig(value: Record<string, unknown>): boolean {
@@ -169,8 +179,8 @@ export function getWorkflows(): { workflows: Record<string, WorkflowConfig>; err
   const errors: string[] = [];
   let raw: unknown = null;
   try {
-    ensureUserData("workflow.json");
-    raw = readJsonFile(WORKFLOW_FILE);
+    ensureUserData(WORKFLOW_FILE);
+    raw = readJsonFile(WORKFLOW_PATH);
   } catch (err) {
     errors.push(`Could not read workflow.json: ${errorMessage(err)}`);
     return { workflows: {}, errors, fallback: true };
@@ -188,7 +198,7 @@ export function getWorkflowConfig(index = "1"): { config: WorkflowConfig; errors
 
 function readWorkflowEntries(): Record<string, unknown> {
   const workflows: Record<string, unknown> = {};
-  const raw = readJsonObject(WORKFLOW_FILE);
+  const raw = readJsonObject(WORKFLOW_PATH);
   if (raw === null) return workflows;
   if (isSingleConfig(raw)) {
     workflows["1"] = raw;
@@ -204,7 +214,7 @@ function readWorkflowEntries(): Record<string, unknown> {
 
 function writeWorkflowEntries(workflows: Record<string, unknown>): void {
   const sorted = Object.fromEntries(Object.entries(workflows).sort(([a], [b]) => compareNumericKeys(a, b)));
-  writeJsonAtomic(WORKFLOW_FILE, sorted);
+  writeJsonAtomic(WORKFLOW_PATH, sorted);
 }
 
 export function setWorkflowConfig(index: string, config: WorkflowConfig): void {

@@ -132,8 +132,11 @@ Message indices refer to the numbered message store — `/msg 6` and `{ "msg": "
 
 #### `finally`
 
-Ordered steps run once after the loop finishes. Each step is `{ "msg": "n" }` or `{ "cmd": "n" }`. The default config ends with a summary of all changes since the last commit.
+Ordered steps run once after the loop finishes, unless a step fails and `finallyOnError` is not enabled. Each step is `{ "msg": "n" }` or `{ "cmd": "n" }`. The default config ends with a summary of all changes since the last commit.
 
+#### `finallyOnError`
+
+Optional boolean (default `false`). When enabled, the `finally` phase runs even when a step fails, so the summary still goes out after an aborted workflow. A manual stop with `/workflow-stop` never triggers the `finally` phase.
 Command content is split on whitespace; single- and double-quoted arguments are supported (e.g. `git commit -m "fix"`), with `\"` and `\\` escapes inside double quotes. Unterminated quotes are rejected.
 
 Invalid config values are reported with a `[pi-msg-workflow]` warning and fall back to the defaults shown above.
@@ -157,7 +160,7 @@ Workflow 2 is a focused review loop over duplicated logic, unnecessary complexit
 The tree step resets the context to the response of message 1, the shared read-the-codebase step of this workflow.
 ## The editor
 
-`/workflow-edit` opens an overlay with three tabs: **[Workflow]** (workflow number, rounds, start/loop/finally steps, tree anchor, add/delete/reorder, if-changes toggle, workflow switching and deletion), **[Messages]** and **[Commands]** (add, edit, delete store entries). Changes are saved per tab with `s`; closing with unsaved changes asks for confirmation.
+`/workflow-edit` opens an overlay with three tabs: **[Workflow]** (workflow number, rounds, start/loop/finally steps, tree anchor, add/delete/reorder, if-changes toggle, finally-on-error toggle, workflow switching and deletion), **[Messages]** and **[Commands]** (add, edit, delete store entries). Changes are saved per tab with `s`; closing with unsaved changes asks for confirmation.
 
 | Key | Action |
 | --- | --- |
@@ -169,6 +172,7 @@ The tree step resets the context to the response of message 1, the shared read-t
 | `J` / `K` | move the selected step up/down (tree step stays first) |
 | `t` | toggle `onlyIfChanges` on a msg or cmd loop step |
 | `[` / `]` | decrease / increase rounds |
+| `f` | toggle `finallyOnError` (run the finally phase even when a step fails) |
 | `u` | undo the last change to the active tab |
 | `w` | switch to another workflow (an unused number creates a new workflow on save) |
 | `d` | delete the current workflow (type `y` to confirm) |

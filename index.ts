@@ -1,16 +1,16 @@
-import type { ExecResult, ExtensionAPI, ExtensionCommandContext, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { getMessages, setMessages } from "./src/messages.js";
 import { getCommands, setCommands } from "./src/commands.js";
-import { MAX_ROUNDS } from "./src/constants.js";
+import { MAX_ROUNDS, WORKFLOW_FILE, MESSAGES_FILE, COMMANDS_FILE } from "./src/constants.js";
 import { compareNumericKeys } from "./src/json-file.js";
 import { runCommand, commandFailureMessage } from "./src/command-runner.js";
 import { getWorkflows, getWorkflowConfig, missingReferences, isNumericString, type StartStep, type LoopStep } from "./src/workflow-config.js";
 import { resetUserData } from "./src/user-data.js";
-import { countLeadingPhaseMatches, findAnchorAfterMessage, countUserTextMatches } from "./src/session-helpers.js";
 import { WorkflowEditorOverlay, WorkflowTab, MessagesTab, CommandsTab, MAX_OVERLAY_HEIGHT_RATIO, type EditorTab } from "./src/workflow-editor.js";
 import { errorMessage } from "./src/errors.js";
 import { captureConsoleMessages } from "./src/console-capture.js";
+import { isWorkflowRunning, requestWorkflowStop, runWorkflow, notifyMissingEntry, navigateToMessageAnchor, notifyNavigationStatus } from "./src/workflow-runner.js";
 
 const OVERLAY_OPTIONS = {
   overlay: true,
@@ -21,14 +21,6 @@ const OVERLAY_OPTIONS = {
     maxHeight: `${MAX_OVERLAY_HEIGHT_RATIO * 100}%` as const,
   },
 };
-
-const SEND_START_TIMEOUT_MS = 5000;
-const SEND_MAX_ATTEMPTS = 3;
-const SEND_POLL_INTERVAL_MS = 25;
-const SEND_GRACE_PERIOD_MS = 2000;
-
-let workflowStopRequested = false;
-let workflowRunning = false;
 
 function clip(text: string | undefined, max: number): string {
   if (text === undefined) return "(missing)";
@@ -58,16 +50,6 @@ function requireArg(ctx: ExtensionCommandContext, args: string, usage: string): 
   if (trimmed !== "") return trimmed;
   ctx.ui.notify(`Usage: ${usage}`, "warning");
   return null;
-}
-
-function notifyMissingEntry(
-  ctx: ExtensionCommandContext,
-  noun: string,
-  num: string,
-  hint?: string,
-  kind: "warning" | "error" = "warning",
-): void {
-  ctx.ui.notify(`${noun} ${num} does not exist.${hint !== undefined ? ` ${hint}` : ""}`, kind);
 }
 
 function registerSendCommand(pi: ExtensionAPI, name: string): void {
@@ -191,184 +173,6 @@ function parseRounds(args: string, fallback: number): number {
   if (value < 1) return fallback;
   return Math.min(value, MAX_ROUNDS);
 }
-async function checkForChanges(pi: ExtensionAPI, ctx: ExtensionCommandContext, round: number, rounds: number): Promise<boolean | null> {
-  ctx.ui.setWorkingMessage(`Round ${round}/${rounds}: checking for changes...`);
-  let statusResult: ExecResult;
-  try {
-    statusResult = await pi.exec("git", ["status", "--porcelain"]);
-  } catch (err) {
-    ctx.ui.notify(`git status --porcelain failed: ${errorMessage(err)}`, "error");
-    return null;
-  }
-  if (statusResult.code !== 0) {
-    ctx.ui.notify(`git status --porcelain failed: ${statusResult.stderr}`, "error");
-    return null;
-  }
-  const changed = statusResult.stdout.trim().length > 0;
-  if (!changed) ctx.ui.notify(`Round ${round}/${rounds}: no changes detected, skipping step`, "info");
-  return changed;
-}
-
-async function runStoredCommand(
-  pi: ExtensionAPI,
-  ctx: ExtensionCommandContext,
-  num: string,
-  prefix: string,
-): Promise<boolean> {
-  const command = getCommands()[num];
-  if (!command) {
-    notifyMissingEntry(ctx, "Command", num, undefined, "error");
-    return false;
-  }
-  const result = await runCommand(pi, command, `${prefix}${command}...`, ctx.ui);
-  if (!result.ok) {
-    ctx.ui.notify(commandFailureMessage(num, result), "error");
-    return false;
-  }
-  return true;
-}
-
-async function sendStoredMessage(
-  pi: ExtensionAPI,
-  ctx: ExtensionCommandContext,
-  num: string,
-  workingText: string,
-): Promise<boolean> {
-  const text = getMessages()[num];
-  if (text === undefined) {
-    notifyMissingEntry(ctx, "Message", num, undefined, "error");
-    return false;
-  }
-  ctx.ui.setWorkingMessage(workingText);
-  const result = await sendAndWaitForTurn(pi, ctx, text);
-  if (result === "cancelled") {
-    ctx.ui.notify("Workflow stopped", "info");
-    return false;
-  }
-  if (result === "failed") {
-    ctx.ui.notify(`Failed to send message ${num}`, "error");
-    return false;
-  }
-  return true;
-}
-
-async function runOncePhase(
-  pi: ExtensionAPI,
-  ctx: ExtensionCommandContext,
-  steps: StartStep[],
-  skipMsgs: number,
-): Promise<boolean> {
-  let skipped = 0;
-  for (const step of steps) {
-    if (workflowStopRequested) {
-      ctx.ui.notify("Workflow stopped", "info");
-      return false;
-    }
-    if (step.msg !== undefined) {
-      if (skipped < skipMsgs) {
-        skipped++;
-        continue;
-      }
-      if (!(await sendStoredMessage(pi, ctx, step.msg, `Sending message ${step.msg}...`))) return false;
-    } else if (step.cmd !== undefined) {
-      if (!(await runStoredCommand(pi, ctx, step.cmd, "Running "))) return false;
-    }
-  }
-  return true;
-}
-
-
-type SendResult = "sent" | "failed" | "cancelled";
-
-async function sendAndWaitForTurn(
-  pi: ExtensionAPI,
-  ctx: { isIdle(): boolean; waitForIdle(): Promise<void>; sessionManager: { getBranch(): SessionEntry[] } },
-  text: string,
-): Promise<SendResult> {
-  let previousCount = -1;
-  for (let attempt = 0; attempt < SEND_MAX_ATTEMPTS; attempt++) {
-    if (workflowStopRequested) return "cancelled";
-    const before = countUserTextMatches(ctx.sessionManager.getBranch(), text);
-    if (previousCount !== -1 && before > previousCount) {
-      await ctx.waitForIdle();
-      return "sent";
-    }
-    previousCount = before;
-    try {
-      pi.sendUserMessage(text, { deliverAs: "followUp" });
-    } catch {
-      return "failed";
-    }
-    let deadline = Date.now() + SEND_START_TIMEOUT_MS;
-    let graceUsed = false;
-    while (Date.now() < deadline) {
-      if (countUserTextMatches(ctx.sessionManager.getBranch(), text) > before) {
-        await ctx.waitForIdle();
-        return "sent";
-      }
-      if (workflowStopRequested) return "cancelled";
-      if (!ctx.isIdle()) {
-        await ctx.waitForIdle();
-        if (countUserTextMatches(ctx.sessionManager.getBranch(), text) > before) return "sent";
-        if (!graceUsed) {
-          deadline = Date.now() + SEND_GRACE_PERIOD_MS;
-          graceUsed = true;
-        }
-      }
-      await new Promise((resolve) => setTimeout(resolve, SEND_POLL_INTERVAL_MS));
-    }
-  }
-  return "failed";
-}
-
-type TreeNavigationStatus = "ok" | "missing" | "not-found" | "cancelled" | "failed" | "fallback";
-
-async function navigateToMessageAnchor(ctx: ExtensionCommandContext, index: string, requirePresence = false): Promise<TreeNavigationStatus> {
-  const text = getMessages()[index];
-  if (!text) return "missing";
-  const present = countUserTextMatches(ctx.sessionManager.getBranch(), text) > 0;
-  if (requirePresence && !present) return "not-found";
-  const anchor = findAnchorAfterMessage(ctx.sessionManager.getBranch(), text);
-  if (!anchor) return "not-found";
-  let navigation: { cancelled: boolean };
-  try {
-    navigation = await ctx.navigateTree(anchor.id, { summarize: false });
-  } catch (err) {
-    ctx.ui.notify(`Could not navigate: ${errorMessage(err)}`, "error");
-    return "failed";
-  }
-  if (navigation.cancelled) return "cancelled";
-  return present ? "ok" : "fallback";
-}
-
-function notifyNavigationStatus(
-  ctx: ExtensionCommandContext,
-  index: string,
-  status: TreeNavigationStatus,
-  cancelledText: string,
-  kind: "warning" | "error",
-): boolean {
-  if (status === "missing") {
-    notifyMissingEntry(ctx, "Message", index, undefined, kind);
-    return false;
-  }
-  if (status === "not-found") {
-    ctx.ui.notify(`Could not find message ${index} in the session.`, kind);
-    return false;
-  }
-  if (status === "cancelled") {
-    ctx.ui.notify(cancelledText, "warning");
-    return false;
-  }
-  if (status === "failed") {
-    return false;
-  }
-  if (status === "fallback") {
-    ctx.ui.notify(`Message ${index} is not in the session - context reset to the response of the first user message instead`, "warning");
-    return true;
-  }
-  return true;
-}
 
 function notifyConfigErrors(ctx: ExtensionCommandContext, errors: string[]): void {
   if (errors.length > 0) {
@@ -378,10 +182,10 @@ function notifyConfigErrors(ctx: ExtensionCommandContext, errors: string[]): voi
 
 export default function (pi: ExtensionAPI) {
   registerSendCommand(pi, "msg");
-  registerChangeCommand(pi, "msg", getMessages, setMessages, "Message", "messages.json");
+  registerChangeCommand(pi, "msg", getMessages, setMessages, "Message", MESSAGES_FILE);
   registerShowCommand(pi, "msg", getMessages, "Message");
   registerPerformCommand(pi, "cmd");
-  registerChangeCommand(pi, "cmd", getCommands, setCommands, "Command", "commands.json");
+  registerChangeCommand(pi, "cmd", getCommands, setCommands, "Command", COMMANDS_FILE);
   registerShowCommand(pi, "cmd", getCommands, "Command");
 
   pi.registerCommand("workflow-edit", {
@@ -439,11 +243,11 @@ export default function (pi: ExtensionAPI) {
     description: "Cancel the running workflow after the current step completes",
     handler: async (_args, ctx: ExtensionCommandContext) => {
       if (!requireInteractive(ctx, "workflow-stop")) return;
-      if (!workflowRunning) {
+      if (!isWorkflowRunning()) {
         ctx.ui.notify("No workflow is currently running", "info");
         return;
       }
-      workflowStopRequested = true;
+      requestWorkflowStop();
       ctx.ui.notify("Workflow stop requested - it will stop after the current step", "info");
     },
   });
@@ -452,7 +256,7 @@ export default function (pi: ExtensionAPI) {
     description: "Reset workflow.json, messages.json and commands.json to the packaged defaults",
     handler: async (_args, ctx: ExtensionCommandContext) => {
       if (!requireInteractive(ctx, "workflow-reset")) return;
-      const failed = ["workflow.json", "messages.json", "commands.json"].filter((file) => !resetUserData(file));
+      const failed = [WORKFLOW_FILE, MESSAGES_FILE, COMMANDS_FILE].filter((file) => !resetUserData(file));
       if (failed.length === 0) {
         ctx.ui.notify("Configuration reset to the packaged defaults (workflow.json, messages.json, commands.json)", "info");
       } else {
@@ -496,7 +300,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       const dryRun = tokens.some((token) => token === "dry" || token === "--dry-run");
-      if (!dryRun && workflowRunning) {
+      if (!dryRun && isWorkflowRunning()) {
         ctx.ui.notify("A workflow is already running - use /workflow-stop to cancel it", "warning");
         return;
       }
@@ -534,44 +338,7 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`[pi-msg-workflow] Dry run: Workflow ${index}, ${rounds} round${rounds === 1 ? "" : "s"}\nstart: ${describeSteps(config.start)}\nloop: ${describeSteps(config.loop)}\nfinally: ${describeSteps(config.finally)}`, "info");
         return;
       }
-      workflowRunning = true;
-      workflowStopRequested = false;
-      try {
-        ctx.ui.setWorkingMessage("Waiting for queued messages to complete...");
-        await ctx.waitForIdle();
-        const startMsgs = config.start.flatMap((step) => (step.msg !== undefined ? [messages[step.msg]!] : []));
-        const matched = countLeadingPhaseMatches(ctx.sessionManager.getBranch(), startMsgs);
-        if (!(await runOncePhase(pi, ctx, config.start, matched))) return;
-        for (let round = 1; round <= rounds; round++) {
-          for (const step of config.loop) {
-            if (workflowStopRequested) {
-              ctx.ui.notify("Workflow stopped", "info");
-              return;
-            }
-            if (step.tree !== undefined) {
-              ctx.ui.setWorkingMessage(`Round ${round}/${rounds}: resetting context to message ${step.tree}...`);
-              const status = await navigateToMessageAnchor(ctx, step.tree);
-              if (!notifyNavigationStatus(ctx, step.tree, status, "Workflow cancelled", "error")) return;
-              continue;
-            }
-            if (step.onlyIfChanges) {
-              const changed = await checkForChanges(pi, ctx, round, rounds);
-              if (changed === null) return;
-              if (!changed) continue;
-            }
-            if (step.cmd !== undefined) {
-              if (!(await runStoredCommand(pi, ctx, step.cmd, `Round ${round}/${rounds}: running `))) return;
-            } else if (step.msg !== undefined) {
-              if (!(await sendStoredMessage(pi, ctx, step.msg, `Round ${round}/${rounds}: sending message ${step.msg}...`))) return;
-            }
-          }
-        }
-        if (!(await runOncePhase(pi, ctx, config.finally, 0))) return;
-        ctx.ui.notify(`Workflow ${index} complete: ${rounds} round${rounds === 1 ? "" : "s"}`, "info");
-      } finally {
-        workflowRunning = false;
-        ctx.ui.setWorkingMessage();
-      }
+      await runWorkflow(pi, ctx, config, index, rounds, messages);
     },
   });
 }
