@@ -118,7 +118,7 @@ export function notifyNavigationStatus(
     return false;
   }
   if (status === "fallback") {
-    ctx.ui.notify(`Message ${index} is not in the session - context reset to the response of the first user message instead`, "warning");
+    ctx.ui.notify(`Message ${index} is not in the session. The context resets to the response of the first user message instead`, "warning");
     return true;
   }
   return true;

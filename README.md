@@ -1,15 +1,15 @@
 # pi-msg-workflow
 
-Numbered message and command stores plus configurable improvement workflows for [pi-coding-agent](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent). `/msg 3` sends a predefined message, `/cmd 1` runs a predefined command, and `/workflow` drives a whole review loop: a start phase, review rounds of context resets and follow-ups, and a final summary. `workflow.json` holds any number of numbered workflows: `/workflow` runs workflow 1, `/workflow 2` runs workflow 2.
+Numbered message and command stores plus configurable improvement workflows for [pi-coding-agent](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent). `/msg 3` sends a predefined message, `/cmd 1` runs a predefined command, and `/workflow` runs a review loop: a start phase, review rounds with context resets and follow-ups, and a final summary.
 
 ## What you get
 
-- **Messages by number.** `/msg 3` sends message 3 as a follow-up. The store is a plain JSON file, editable with `/change-msg`, `/show-msg`, or the editor.
-- **Commands by number.** `/cmd 1` runs command 1 via `pi.exec` — no shell, just a whitespace split with quoted-argument support.
-- **Multiple configurable workflows.** `workflow.json` defines any number of numbered workflows (start phase, review loop, finally phase). `/workflow` runs workflow 1, `/workflow 2` runs workflow 2, `/workflow 2 3` runs three review rounds of workflow 2; `/workflow dry` prints the plan without sending or executing anything.
-- **An interactive editor.** `/workflow-edit` opens a three-tab overlay for the workflow, messages, and commands: add, edit, delete, reorder, and undo, with cross-tab reference checks on save.
-- **Resume where you left off.** An interrupted workflow skips start messages that are already in the session.
-- **Customizations that survive updates.** Your copies of the JSON files live in `~/.config/pi-msg-workflow/` and are never overwritten by a package update.
+- `/msg 3` sends message 3 as a follow-up. The store is a plain JSON file, editable with `/change-msg`, `/show-msg`, or the editor.
+- `/cmd 1` runs command 1 via `pi.exec`. No shell, just a whitespace split with quoted-argument support.
+- `workflow.json` defines any number of numbered workflows (start phase, review loop, finally phase). `/workflow` runs workflow 1, `/workflow 2` runs workflow 2, and `/workflow 2 3` runs three review rounds of workflow 2. `/workflow dry` prints the plan without sending or executing anything.
+- `/workflow-edit` opens a three-tab overlay for the workflow, messages, and commands: add, edit, delete, reorder, and undo, with cross-tab reference checks on save.
+- An interrupted workflow skips start messages that are already in the session.
+- Your copies of the JSON files live in `~/.config/pi-msg-workflow/` and are never overwritten by a package update.
 
 ## Quick start
 
@@ -31,7 +31,7 @@ pi install npm:pi-msg-workflow
 /workflow
 ```
 
-The package ships with default messages (`1`–`15`), commands (`1` = `git add .`), and two workflows, so everything works out of the box.
+The package ships with default messages (`1` to `15`), a default command (`1` = `git add .`), and two workflows.
 
 ## Commands
 
@@ -101,11 +101,9 @@ Commands that take a number offer Tab autocomplete.
 }
 ```
 
-`/workflow` runs workflow 1, `/workflow 2` runs workflow 2, and `/workflow 2 3` runs workflow 2 with three review rounds. `dry` or `--dry-run` prints the resolved plan for the selected workflow. `list` prints all configured workflows with their rounds and step counts. A number that is not in `workflow.json` is rejected with `Workflow N does not exist.` — create it with `/workflow-edit` (press `w`).
+`/workflow` runs workflow 1, `/workflow 2` runs workflow 2, and `/workflow 2 3` runs workflow 2 with three review rounds. `dry` or `--dry-run` prints the resolved plan for the selected workflow. `list` prints all configured workflows with their rounds and step counts. A number that is not in `workflow.json` is rejected with `Workflow N does not exist.` Create it with `/workflow-edit` (press `w`).
 
 ### The default workflow (1)
-
-Workflow 1 is the general improvement loop shown above.
 
 #### `rounds`
 
@@ -117,7 +115,7 @@ Ordered steps run once before the loop. Each step is `{ "msg": "n" }` or `{ "cmd
 
 #### `loop`
 
-Ordered steps repeated each round. The first step must be a `tree` step — the context reset always happens at the beginning of the loop.
+Ordered steps repeated each round. The first step must be a `tree` step; the context reset always happens at the beginning of the loop.
 
 | Step | Meaning |
 | --- | --- |
@@ -128,7 +126,7 @@ Ordered steps repeated each round. The first step must be a `tree` step — the 
 | `{ "cmd": "1", "onlyIfChanges": true }` | Perform command 1 only when `git status --porcelain` shows changes. |
 
 `onlyIfChanges` runs `git status --porcelain` in the project directory, so it requires the project to be a git repository. A msg or cmd step with `onlyIfChanges` is skipped when there are no changes.
-Message indices refer to the numbered message store — `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store — `/cmd 1`, `/change-cmd 1 "git add ."`, and `{ "cmd": "1" }` all address the same command. The default message store is numbered `1`–`15`: `1`–`8` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix, summarize), `9`–`15` serve workflow 2 (combined review, value check, implement, closer look, fix, validate, summarize).
+Message indices refer to the numbered message store: `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store: `/cmd 1`, `/change-cmd 1 "git add ."`, and `{ "cmd": "1" }` all address the same command. The default message store is numbered `1` to `15`: `1` to `8` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix, summarize), `9` to `15` serve workflow 2 (combined review, value check, implement, closer look, fix, validate, summarize).
 
 #### `finally`
 
@@ -139,7 +137,7 @@ Ordered steps run once after the loop finishes, unless a step fails and `finally
 Optional boolean (default `false`). When enabled, the `finally` phase runs even when a step fails, so the summary still goes out after an aborted workflow. A manual stop with `/workflow-stop` never triggers the `finally` phase.
 Command content is split on whitespace; single- and double-quoted arguments are supported (e.g. `git commit -m "fix"`), with `\"` and `\\` escapes inside double quotes. Unterminated quotes are rejected.
 
-Invalid config values are reported with a `[pi-msg-workflow]` warning and fall back to the defaults shown above.
+Config values that fail validation produce a `[pi-msg-workflow]` warning and fall back to the defaults shown above.
 
 ### Workflow 2: deduplication, simplification, bug reduction
 
@@ -158,9 +156,10 @@ Workflow 2 is a focused review loop over duplicated logic, unnecessary complexit
 | `{ "msg": "15" }` | Summarize all of the changes since the last commit. |
 
 The tree step resets the context to the response of message 1, the shared read-the-codebase step of this workflow.
+
 ## The editor
 
-`/workflow-edit` opens an overlay with three tabs: **[Workflow]** (workflow number, rounds, start/loop/finally steps, tree anchor, add/delete/reorder, if-changes toggle, finally-on-error toggle, workflow switching and deletion), **[Messages]** and **[Commands]** (add, edit, delete store entries). Changes are saved per tab with `s`; closing with unsaved changes asks for confirmation.
+`/workflow-edit` opens an overlay with three tabs: `[Workflow]` (workflow number, rounds, start/loop/finally steps, tree anchor, add/delete/reorder, if-changes toggle, finally-on-error toggle, workflow switching and deletion), `[Messages]` and `[Commands]` (add, edit, delete store entries). Changes are saved per tab with `s`; closing with unsaved changes asks for confirmation.
 
 | Key | Action |
 | --- | --- |
@@ -181,31 +180,33 @@ The tree step resets the context to the response of message 1, the shared read-t
 
 While editing content, `←` / `→` move the cursor, `Home` / `End` jump to the start / end, `Delete` removes the character under the cursor, and `Backspace` removes the character before it. Input longer than the window wraps onto additional lines, so the full content stays visible while you type or paste.
 
-The Workflow tab edits one workflow at a time. `w` switches to another workflow number; switching to a number that does not exist yet starts a new workflow which is created when you press `s`. `d` deletes the current workflow after typing `y` to confirm. The tab bar shows the number of the workflow being edited (e.g. `[Workflow 2]`). Saving the Workflow tab refuses indices that reference missing messages or commands, so add and save those in the Messages/Commands tabs first. Saving the Messages and Commands tabs refuses to delete entries still referenced by any workflow, so drop and save those references in the Workflow tab first. Entries referenced by any workflow are marked with `*N` (the workflow number) in the Messages and Commands tabs. The tree step is fixed as the first loop step — only its anchor index is editable.
+The Workflow tab edits one workflow at a time. `w` switches to another workflow number; switching to a number that does not exist yet starts a new workflow which is created when you press `s`. `d` deletes the current workflow after typing `y` to confirm. The tab bar shows the number of the workflow being edited (e.g. `[Workflow 2]`). Saving the Workflow tab refuses indices that reference missing messages or commands, so add and save those in the Messages/Commands tabs first. Saving the Messages and Commands tabs refuses to delete entries still referenced by any workflow, so drop and save those references in the Workflow tab first. Entries referenced by any workflow are marked with `*N` (the workflow number) in the Messages and Commands tabs. The tree step is fixed as the first loop step; only its anchor index is editable.
+
 While the editor is open, console diagnostics from the extension (for example failed reads or syncs of the config files) are shown as a temporary popup above the editor instead of being lost behind it. The popup dismisses on any key or after a few seconds; further messages queue up until it closes. When you start entering content (`e`, `a`, `w`, `d`), a popup with the input field appears in the center of the screen; `Enter` confirms and `Esc` cancels, and long input wraps onto additional lines inside the popup so everything stays visible. Successful edits (add, edit, delete, move, if-changes toggle, rounds, undo, save, workflow switch) are acknowledged with a confirmation popup, which does not capture keyboard focus so you can keep typing.
 
 ## Data location
-`workflow.json` (all numbered workflows), `messages.json`, and `commands.json` live in `~/.config/pi-msg-workflow/`. On first use the packaged defaults are copied there; afterwards all reads and writes use the user copies, so updating the package never overwrites your customizations. If you previously edited these files inside the installed package, back them up before updating — npm replaces the package directory.
+
+`workflow.json` (all numbered workflows), `messages.json`, and `commands.json` live in `~/.config/pi-msg-workflow/`. On first use the packaged defaults are copied there; afterwards all reads and writes use the user copies, so updating the package never overwrites your customizations. If you previously edited these files inside the installed package, back them up before updating; npm replaces the package directory.
 
 Each user copy is tracked against the checksum of the packaged default it was synced with. A file that still matches that checksum is considered unmodified: when a package update ships a new default, the user copy is replaced automatically. Once you edit a file, it no longer matches and is never overwritten. For installs that predate this feature, a user copy that differs from the current default is treated as customized and left alone.
 
 ## Limitations
 
-- **No shell operators.** Command content is split on whitespace (single- and double-quoted arguments supported) and executed directly — pipes, `&&`, `||`, and redirection are not supported. Use one command per step or a script.
-- **Quotes in `/change-msg` and `/change-cmd`.** Content containing double quotes must be wrapped in single quotes, e.g. `/change-msg 3 'say "hi"'`. Escaped quotes are only supported inside stored command content, not in the change commands.
-- **Text-based resume.** The start phase skips msg steps whose text matches the leading user messages of the session, in order, stopping at the first non-matching user message. A message you typed manually with identical text counts as already sent. cmd steps always re-run.
-- **One workflow at a time.** `/workflow` refuses to start while another workflow is running. `/workflow-stop` reports when no workflow is running.
+- Command content is split on whitespace (single- and double-quoted arguments supported) and executed directly. Pipes, `&&`, `||`, and redirection are not supported; use one command per step or a script.
+- Content with double quotes in `/change-msg` and `/change-cmd` must be wrapped in single quotes, e.g. `/change-msg 3 'say "hi"'`. Escaped quotes are only supported inside stored command content, not in the change commands.
+- The start phase skips msg steps whose text matches the leading user messages of the session, in order, stopping at the first non-matching user message. A message you typed manually with identical text counts as already sent. cmd steps always re-run.
+- `/workflow` refuses to start while another workflow is running. `/workflow-stop` reports when no workflow is running.
 
 ## Troubleshooting
 
-- **"Message N does not exist."** Create it with `/change-msg N "content"`, in the editor's Messages tab, or run `/workflow-reset` to restore the default stores.
-- **"Workflow N does not exist."** The number is not in `workflow.json`. `/workflow` runs the default workflow 1; create other workflows in the editor with `w` or add them to `workflow.json` directly.
-- **The workflow refuses to start.** Another workflow is running — use `/workflow-stop` to cancel it after the current step.
-- **The editor refuses to save.** The Workflow tab references messages or commands that don't exist yet: add and save them in the Messages/Commands tabs first. The Messages/Commands tabs refuse to delete entries still referenced by the workflow: drop those references in the Workflow tab first.
-- **`onlyIfChanges` never fires.** The project is not a git repository, or `git status --porcelain` reports no changes.
-- **My config changes are ignored.** The files live in `~/.config/pi-msg-workflow/`, not inside the installed package. If you edited the packaged copies, back them up and let the user copies sync.
-- **I want the default workflows back.** `/workflow-reset` restores `workflow.json`, `messages.json`, and `commands.json` to the packaged defaults.
-- **`/tree-jump` says the message is not in the session.** The message text must appear verbatim in the session history; send it first with `/msg N`.
+- `"Message N does not exist."` Create it with `/change-msg N "content"`, in the editor's Messages tab, or run `/workflow-reset` to restore the default stores.
+- `"Workflow N does not exist."` The number is not in `workflow.json`. `/workflow` runs the default workflow 1; create other workflows in the editor with `w` or add them to `workflow.json` directly.
+- The workflow refuses to start. Another workflow is running; use `/workflow-stop` to cancel it after the current step.
+- The editor refuses to save. The Workflow tab references messages or commands that don't exist yet: add and save them in the Messages/Commands tabs first. The Messages/Commands tabs refuse to delete a message or command still referenced by the workflow: drop those references in the Workflow tab first.
+- `onlyIfChanges` never fires. The project is not a git repository, or `git status --porcelain` reports no changes.
+- My config changes are ignored. The files live in `~/.config/pi-msg-workflow/`, not inside the installed package. If you edited the packaged copies, back them up and let the user copies sync.
+- I want the default workflows back. `/workflow-reset` restores `workflow.json`, `messages.json`, and `commands.json` to the packaged defaults.
+- `/tree-jump` says the message is not in the session. The message text must appear verbatim in the session history; send it first with `/msg N`.
 
 ## Development
 

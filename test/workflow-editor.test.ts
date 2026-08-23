@@ -609,7 +609,7 @@ describe("WorkflowTab", () => {
     tab.handleInput("\r");
     tab.save();
     expect(writeFileSync).not.toHaveBeenCalled();
-    expect(tab.getAboveContentLine(80)[0]).toContain("Missing messages: 99 - add and save them in the Messages tab first");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Missing messages: 99. Add and save them in the Messages tab first");
     expect(tab.dirty).toBe(true);
   });
 
@@ -620,7 +620,7 @@ describe("WorkflowTab", () => {
     tab.handleInput("\r");
     tab.save();
     expect(writeFileSync).not.toHaveBeenCalled();
-    expect(tab.getAboveContentLine(80)[0]).toContain("Missing commands: 9 - add and save them in the Commands tab first");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Missing commands: 9. Add and save them in the Commands tab first");
     expect(tab.dirty).toBe(true);
   });
 
@@ -793,7 +793,7 @@ describe("WorkflowTab", () => {
     expect(tab.draft.start).toEqual([{ msg: "1" }, { msg: "2" }, { msg: "3" }, { msg: "4" }, { msg: "5" }]);
     expect(tab.draft.loop[0]).toEqual({ cmd: "1" });
     expect(tab.draft.tree).toBe("1");
-    expect(popup).toHaveBeenCalledWith(expect.stringContaining("press s to create it"));
+    expect(popup).toHaveBeenCalledWith(expect.stringContaining("Press s to create it"));
   });
 
   it("rejects a non-numeric workflow number", () => {
@@ -860,7 +860,7 @@ describe("WorkflowTab", () => {
     type(tab, "7");
     tab.handleInput("\r");
     tab.handleInput("d");
-    expect(tab.getAboveContentLine(80)[0]).toContain("nothing to delete");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Nothing to delete");
     expect(writeFileSync).not.toHaveBeenCalled();
   });
 });
@@ -956,7 +956,7 @@ describe("MessagesTab", () => {
     tab.handleInput("x");
     tab.save();
     expect(writeFileSync).not.toHaveBeenCalled();
-    expect(tab.getAboveContentLine(80)[0]).toContain("Messages still used by the workflow: 1 - remove and save them in the Workflow");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Messages still used by the workflow: 1. Remove and save them in the Workflow");
     expect(tab.getAboveContentLine(80)[0]).not.toContain("tab first");
     expect(tab.dirty).toBe(true);
   });
@@ -1249,7 +1249,7 @@ describe("CommandsTab", () => {
     tab.handleInput("x");
     tab.save();
     expect(writeFileSync).not.toHaveBeenCalled();
-    expect(tab.getAboveContentLine(80)[0]).toContain("Commands still used by the workflow: 1 - remove and save them in the Workflow");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Commands still used by the workflow: 1. Remove and save them in the Workflow");
     expect(tab.getAboveContentLine(80)[0]).not.toContain("tab first");
     expect(tab.dirty).toBe(true);
   });
@@ -1338,7 +1338,7 @@ describe("WorkflowEditorOverlay", () => {
     expect(done).not.toHaveBeenCalled();
     const popup = showOverlay.mock.calls[2]![0];
     const lines = popup.render(50);
-    expect(lines.join("\n")).toContain("Unsaved changes - press q again to close");
+    expect(lines.join("\n")).toContain("Unsaved changes. Press q again to close");
     expect(showOverlay.mock.calls[2]![1]).toMatchObject({ anchor: "center" });
   });
 
@@ -1446,7 +1446,7 @@ describe("WorkflowEditorOverlay", () => {
     expect(showOverlay).toHaveBeenCalledTimes(2);
     expect(showOverlay.mock.results[0]!.value.hide).toHaveBeenCalled();
     const lines = showOverlay.mock.calls[1]![0].render(60).join("\n");
-    expect(lines).toContain("Message 1 updated - press s to save");
+    expect(lines).toContain("Message 1 updated. Press s to save.");
     expect(lines).not.toContain("any key");
   });
 
@@ -1455,7 +1455,7 @@ describe("WorkflowEditorOverlay", () => {
     overlay.handleInput("a");
     type(messagesTab, "Brand new message");
     messagesTab.handleInput("\r");
-    expect(showOverlay.mock.calls[1]![0].render(60).join("\n")).toContain("Message 9 added - press s to save");
+    expect(showOverlay.mock.calls[1]![0].render(60).join("\n")).toContain("Message 9 added. Press s to save.");
   });
 
   it("hides the input popup when editing is cancelled with escape", () => {
@@ -1484,17 +1484,17 @@ describe("WorkflowEditorOverlay", () => {
   it("shows a popup when a message is deleted", () => {
     overlay.handleInput("\t");
     overlay.handleInput("x");
-    expect(showOverlay.mock.calls[0]![0].render(60).join("\n")).toContain("Message 1 deleted - press s to save");
+    expect(showOverlay.mock.calls[0]![0].render(60).join("\n")).toContain("Message 1 deleted. Press s to save.");
   });
 
   it("shows a popup when a step is deleted", () => {
     overlay.handleInput("x");
-    expect(showOverlay.mock.calls[0]![0].render(60).join("\n")).toContain("Step deleted - press s to save");
+    expect(showOverlay.mock.calls[0]![0].render(60).join("\n")).toContain("Step deleted. Press s to save.");
   });
 
   it("shows a popup when rounds change", () => {
     overlay.handleInput("]");
-    expect(showOverlay.mock.calls[0]![0].render(60).join("\n")).toContain("Rounds: 3 - press s to save");
+    expect(showOverlay.mock.calls[0]![0].render(60).join("\n")).toContain("Rounds: 3. Press s to save.");
   });
 
   it("shows a popup when the workflow is saved", () => {

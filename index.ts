@@ -248,7 +248,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       requestWorkflowStop();
-      ctx.ui.notify("Workflow stop requested - it will stop after the current step", "info");
+      ctx.ui.notify("Workflow stop requested. It will stop after the current step", "info");
     },
   });
 
@@ -301,7 +301,7 @@ export default function (pi: ExtensionAPI) {
       }
       const dryRun = tokens.some((token) => token === "dry" || token === "--dry-run");
       if (!dryRun && isWorkflowRunning()) {
-        ctx.ui.notify("A workflow is already running - use /workflow-stop to cancel it", "warning");
+        ctx.ui.notify("A workflow is already running. Use /workflow-stop to cancel it", "warning");
         return;
       }
       const numeric = tokens.filter(isNumericString);
@@ -320,11 +320,11 @@ export default function (pi: ExtensionAPI) {
       const commands = getCommands();
       const { messages: missing, commands: missingCommands } = missingReferences(config, messages, commands);
       if (missing.length > 0) {
-        ctx.ui.notify(`Missing messages in messages.json: ${missing.join(", ")} - run /workflow-reset to restore the default stores or add them with /change-msg.`, "error");
+        ctx.ui.notify(`Missing messages in messages.json: ${missing.join(", ")}. Restore the default stores with /workflow-reset or add them with /change-msg.`, "error");
         return;
       }
       if (missingCommands.length > 0) {
-        ctx.ui.notify(`Missing commands in commands.json: ${missingCommands.join(", ")} - run /workflow-reset to restore the default stores or add them with /change-cmd.`, "error");
+        ctx.ui.notify(`Missing commands in commands.json: ${missingCommands.join(", ")}. Restore the default stores with /workflow-reset or add them with /change-cmd.`, "error");
         return;
       }
       if (config.loop.length === 0 || config.loop[0]!.tree === undefined) {

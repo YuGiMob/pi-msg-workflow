@@ -342,11 +342,11 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       const treeIndex = config.loop.findIndex((step) => step.tree !== undefined);
       if (treeIndex === -1) {
         this.loadFailedIndex = index;
-        return { ok: false, flash: `Workflow ${index} has no tree step - fix workflow.json first` };
+        return { ok: false, flash: `Workflow ${index} has no tree step. Fix workflow.json first` };
       }
       tree = config.loop[treeIndex]!.tree!;
       loop = config.loop.filter((_, i) => i !== treeIndex);
-      flash = `Workflow ${index} had a misplaced tree step - moved to the start of the loop`;
+      flash = `Workflow ${index} had a misplaced tree step. It was moved to the start of the loop`;
     }
     this.loadFailedIndex = null;
     this.index = index;
@@ -378,7 +378,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
         this.setFlash(result.flash);
         return null;
       }
-      this.popup(result.flash ?? (exists ? `Editing workflow ${index}` : `Workflow ${index} is new - press s to create it`));
+      this.popup(result.flash ?? (exists ? `Editing workflow ${index}` : `Workflow ${index} is new. Press s to create it`));
       return null;
     });
   }
@@ -386,7 +386,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
   private deleteWorkflow(): void {
     const { exists } = getWorkflowConfig(this.index);
     if (!exists) {
-      this.setFlash(`Workflow ${this.index} does not exist - nothing to delete`);
+      this.setFlash(`Workflow ${this.index} does not exist. Nothing to delete`);
       return;
     }
     this.startInput(`delete workflow ${this.index}? type y to confirm: `, (value) => {
@@ -508,20 +508,20 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     if (matchesKey(data, "[")) {
       if (this.draft.rounds > 1) {
         this.mutate(() => { this.draft.rounds -= 1; });
-        this.popup(`Rounds: ${this.draft.rounds} - press s to save`);
+        this.popup(`Rounds: ${this.draft.rounds}. Press s to save.`);
       }
       return true;
     }
     if (matchesKey(data, "]")) {
       if (this.draft.rounds < MAX_ROUNDS) {
         this.mutate(() => { this.draft.rounds += 1; });
-        this.popup(`Rounds: ${this.draft.rounds} - press s to save`);
+        this.popup(`Rounds: ${this.draft.rounds}. Press s to save.`);
       }
       return true;
     }
     if (matchesKey(data, "f")) {
       this.mutate(() => { this.draft.finallyOnError = !this.draft.finallyOnError; });
-      this.popup(`finallyOnError ${this.draft.finallyOnError ? "enabled" : "disabled"} - press s to save`);
+      this.popup(`finallyOnError ${this.draft.finallyOnError ? "enabled" : "disabled"}. Press s to save.`);
       return true;
     }
     if (matchesKey(data, "s")) {
@@ -538,7 +538,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     }, (value) => {
       const step = target[position]!;
       target[position] = action === "msg" ? { ...step, msg: value } : { ...step, cmd: value };
-      this.popup("Step updated - press s to save");
+      this.popup("Step updated. Press s to save.");
     });
   }
 
@@ -549,7 +549,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
         return isNumericString(value) ? null : "Index must be a number.";
       }, (value) => {
         this.draft.tree = value;
-        this.popup("Tree anchor updated - press s to save");
+        this.popup("Tree anchor updated. Press s to save.");
       });
       return;
     }
@@ -564,7 +564,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
         return isNumericString(value) ? null : "Index must be a number.";
       }, (value) => {
         target[position] = { ...step, tree: value };
-        this.popup("Step updated - press s to save");
+        this.popup("Step updated. Press s to save.");
       });
     }
   }
@@ -576,7 +576,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       const match = value.match(/^(msg|cmd)\s+(\d+)$/)!;
       target.push(match[1] === "msg" ? { msg: match[2]! } : { cmd: match[2]! });
       select();
-      this.popup("Step added - press s to save");
+      this.popup("Step added. Press s to save.");
     });
   }
 
@@ -617,7 +617,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       }
       this.selection = Math.min(this.selection, this.rowCount() - 1);
     });
-    this.popup("Step deleted - press s to save");
+    this.popup("Step deleted. Press s to save.");
   }
 
   private swapRows(target: LoopStep[], position: number, delta: number): boolean {
@@ -638,7 +638,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     this.pushUndo(snap);
     this.selection += delta;
     this.dirty = true;
-    this.popup("Step moved - press s to save");
+    this.popup("Step moved. Press s to save.");
   }
 
   private toggleIfChanges(kind: SelectableKind, position: number): void {
@@ -658,12 +658,12 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
         this.draft.loop[position] = { ...step, onlyIfChanges: true };
       }
     });
-    this.popup("if-changes toggled - press s to save");
+    this.popup("if-changes toggled. Press s to save.");
   }
 
   save(): void {
     if (this.loadFailedIndex !== null) {
-      this.setFlash(`Workflow ${this.loadFailedIndex} has no tree step - fix workflow.json first`);
+      this.setFlash(`Workflow ${this.loadFailedIndex} has no tree step. Fix workflow.json first.`);
       return;
     }
     const config: WorkflowConfig = {
@@ -675,11 +675,11 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     };
     const { messages, commands } = missingReferences(config, getMessages(), getCommands());
     if (messages.length > 0) {
-      this.setFlash(`Missing messages: ${messages.join(", ")} - add and save them in the Messages tab first`);
+      this.setFlash(`Missing messages: ${messages.join(", ")}. Add and save them in the Messages tab first.`);
       return;
     }
     if (commands.length > 0) {
-      this.setFlash(`Missing commands: ${commands.join(", ")} - add and save them in the Commands tab first`);
+      this.setFlash(`Missing commands: ${commands.join(", ")}. Add and save them in the Commands tab first.`);
       return;
     }
     try {
@@ -810,7 +810,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
 
   private editSelected(): void {
     if (this.keys.length === 0) {
-      this.setFlash(`No ${this.noun.toLowerCase()}s yet - press a to add one`);
+      this.setFlash(`No ${this.noun.toLowerCase()}s yet. Press a to add one.`);
       return;
     }
     const key = this.keys[this.selection]!;
@@ -818,7 +818,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
       return value.length >= 5 ? null : `${this.noun} must be at least 5 characters.`;
     }, (value) => {
       this.draft[key] = value;
-      this.popup(`${this.noun} ${key} updated - press s to save`);
+      this.popup(`${this.noun} ${key} updated. Press s to save.`);
     });
   }
 
@@ -831,7 +831,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
       this.keys.push(key);
       this.keys.sort(compareNumericKeys);
       this.selection = this.keys.indexOf(key);
-      this.popup(`${this.noun} ${key} added - press s to save`);
+      this.popup(`${this.noun} ${key} added. Press s to save.`);
     });
   }
 
@@ -843,7 +843,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
       this.keys.splice(this.selection, 1);
       this.selection = Math.min(this.selection, Math.max(0, this.keys.length - 1));
     });
-    this.popup(`${this.noun} ${key} deleted - press s to save`);
+    this.popup(`${this.noun} ${key} deleted. Press s to save.`);
   }
 
   save(): void {
@@ -851,7 +851,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
     const referenced = Object.values(workflows).flatMap((config) => this.referenced(config));
     const removed = [...new Set(referenced.filter((num) => this.savedSnapshot.draft[num] !== undefined && this.draft[num] === undefined))];
     if (removed.length > 0) {
-      this.setFlash(`${this.noun}s still used by the workflow: ${removed.join(", ")} - remove and save them in the Workflow tab first`);
+      this.setFlash(`${this.noun}s still used by the workflow: ${removed.join(", ")}. Remove and save them in the Workflow tab first.`);
       return;
     }
     try {
@@ -869,7 +869,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
     const th = this.theme;
     const lines: string[] = [];
     if (this.keys.length === 0) {
-      lines.push(th.fg("dim", ` No ${this.noun.toLowerCase()}s yet - press a to add one`));
+      lines.push(th.fg("dim", ` No ${this.noun.toLowerCase()}s yet. Press a to add one.`));
     }
     const { workflows } = getWorkflows();
     const referencedBy = new Map<string, string[]>();
@@ -1122,7 +1122,7 @@ export class WorkflowEditorOverlay {
 
   private showConfirmPopup(): void {
     if (this.confirmPopupHandle) return;
-    const text = "Unsaved changes - press q again to close";
+    const text = "Unsaved changes. Press q again to close";
     const popup = new Popup(
       this.opts.theme,
       [this.opts.theme.fg("warning", ` ${text}`)],

@@ -91,7 +91,7 @@ function parseStartSteps(
   const value = input[field];
   if (value === undefined) return fallback;
   if (Array.isArray(value) && value.every((step) => isStartStep(step))) return value as StartStep[];
-  errors.push(`${tag}Invalid ${field} - must be an array of msg/cmd steps - using default.`);
+  errors.push(`${tag}Invalid ${field}: must be an array of msg/cmd steps. Using the default.`);
   return fallback;
 }
 
@@ -103,7 +103,7 @@ function parseConfig(input: Record<string, unknown>, errors: string[], label: st
     if (typeof input.rounds === "number" && Number.isInteger(input.rounds) && input.rounds >= 1 && input.rounds <= MAX_ROUNDS) {
       rounds = input.rounds;
     } else {
-      errors.push(`${tag}Invalid rounds "${String(input.rounds)}" - defaulting to ${DEFAULT_ROUNDS}.`);
+      errors.push(`${tag}Invalid rounds "${String(input.rounds)}". Defaulting to ${DEFAULT_ROUNDS}.`);
     }
   }
 
@@ -112,7 +112,7 @@ function parseConfig(input: Record<string, unknown>, errors: string[], label: st
     if (typeof input.finallyOnError === "boolean") {
       finallyOnError = input.finallyOnError;
     } else {
-      errors.push(`${tag}Invalid finallyOnError "${String(input.finallyOnError)}" - defaulting to false.`);
+      errors.push(`${tag}Invalid finallyOnError "${String(input.finallyOnError)}". Defaulting to false.`);
     }
   }
 
@@ -127,16 +127,16 @@ function parseConfig(input: Record<string, unknown>, errors: string[], label: st
         if (isStep(entry)) {
           steps.push(entry);
         } else {
-          errors.push(`${tag}Invalid loop step ${JSON.stringify(entry)} - skipped.`);
+          errors.push(`${tag}Invalid loop step ${JSON.stringify(entry)}. Skipped.`);
         }
       }
       if (steps.length > 0) {
         loop = steps;
       } else {
-        errors.push(`${tag}No valid loop steps - using default loop.`);
+        errors.push(`${tag}No valid loop steps. Using the default loop.`);
       }
     } else {
-      errors.push(`${tag}Invalid loop - must be an array of steps - using default loop.`);
+      errors.push(`${tag}Invalid loop: must be an array of steps. Using the default loop.`);
     }
   }
 
@@ -157,17 +157,17 @@ function parseWorkflows(raw: unknown, errors: string[]): Record<string, Workflow
   }
   const input = raw as Record<string, unknown>;
   if (isSingleConfig(input)) {
-    errors.push("workflow.json uses the legacy single-workflow format - treated as workflow 1.");
+    errors.push("workflow.json uses the legacy single-workflow format. Treating it as workflow 1.");
     return { "1": parseConfig(input, errors, "1") };
   }
   const workflows: Record<string, WorkflowConfig> = {};
   for (const [key, value] of Object.entries(input)) {
     if (!isNumericString(key)) {
-      errors.push(`Invalid workflow key "${key}" - skipped.`);
+      errors.push(`Invalid workflow key "${key}". Skipped.`);
       continue;
     }
     if (value === null || typeof value !== "object" || Array.isArray(value)) {
-      errors.push(`Invalid workflow ${key} - must be an object - skipped.`);
+      errors.push(`Invalid workflow ${key}: must be an object. Skipped.`);
       continue;
     }
     workflows[key] = parseConfig(value as Record<string, unknown>, errors, key);
