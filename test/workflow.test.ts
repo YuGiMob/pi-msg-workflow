@@ -910,7 +910,7 @@ describe("workflow extension", () => {
       vi.useRealTimers();
     }
   });
-  it("retries when the message does not land within the grace period despite repeated busy cycles", async () => {
+  it("does not re-send a message while the session stays busy and waits for a stop", async () => {
     vi.useFakeTimers();
     try {
       holder.workflow = { "1": { rounds: 1, start: [], loop: [{ tree: "1" }, { msg: "6" }], finally: [] } };
@@ -920,11 +920,13 @@ describe("workflow extension", () => {
         waitForIdle: vi.fn(async () => {}),
       });
       const handlerPromise = commands["workflow"].handler("", ctx);
-      await vi.advanceTimersByTimeAsync(7000);
-      await handlerPromise;
-      expect(pi.sendUserMessage).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
       expect(pi.sendUserMessage).toHaveBeenCalledWith(MSG6, { deliverAs: "followUp" });
-      expect(ctx.ui.notify).toHaveBeenCalledWith("Failed to send message 6", "error");
+      await commands["workflow-stop"].handler("", ctx);
+      await vi.advanceTimersByTimeAsync(100);
+      await handlerPromise;
+      expect(ctx.ui.notify).toHaveBeenCalledWith("Workflow stopped", "info");
     } finally {
       vi.useRealTimers();
     }

@@ -89,10 +89,10 @@ function parseStartSteps(
   fallback: StartStep[],
 ): StartStep[] {
   const value = input[field];
-  if (value === undefined) return fallback;
+  if (value === undefined) return fallback.map((step) => ({ ...step }));
   if (Array.isArray(value) && value.every((step) => isStartStep(step))) return value as StartStep[];
   errors.push(`${tag}Invalid ${field}: must be an array of msg/cmd steps. Using the default.`);
-  return fallback;
+  return fallback.map((step) => ({ ...step }));
 }
 
 function parseConfig(input: Record<string, unknown>, errors: string[], label: string): WorkflowConfig {
@@ -119,7 +119,7 @@ function parseConfig(input: Record<string, unknown>, errors: string[], label: st
   const start = parseStartSteps(input, errors, tag, "start", DEFAULT_START);
   const finallySteps = parseStartSteps(input, errors, tag, "finally", DEFAULT_FINALLY);
 
-  let loop = DEFAULT_LOOP;
+  let loop: LoopStep[] = DEFAULT_LOOP.map((step) => ({ ...step }));
   if (input.loop !== undefined) {
     if (Array.isArray(input.loop)) {
       const steps: LoopStep[] = [];

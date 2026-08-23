@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { splitCommand, commandFailureMessage } from "../src/command-runner.js";
+import { describe, expect, it, vi } from "vitest";
+import { splitCommand, commandFailureMessage, runCommand } from "../src/command-runner.js";
 
 describe("splitCommand", () => {
   it("splits on whitespace", () => {
@@ -61,7 +61,7 @@ describe("commandFailureMessage", () => {
   });
 
   it("reports failures with stderr", () => {
-    expect(commandFailureMessage("1", { ok: false, reason: "failed", stderr: "boom" })).toBe("Command 1 failed: boom");
+    expect(commandFailureMessage("1", { ok: false, reason: "failed", stderr: "boom", stdout: "" })).toBe("Command 1 failed: boom");
   });
 
   it("falls back to stdout when stderr is empty", () => {
@@ -69,6 +69,38 @@ describe("commandFailureMessage", () => {
   });
 
   it("reports when there is no error output", () => {
-    expect(commandFailureMessage("1", { ok: false, reason: "failed", stderr: "" })).toBe("Command 1 failed with no error output");
+    expect(commandFailureMessage("1", { ok: false, reason: "failed", stderr: "", stdout: "" })).toBe("Command 1 failed with no error output");
+  });
+});
+
+describe("runCommand", () => {
+  function createPi() {
+    return { exec: vi.fn(async () => ({ code: 0, stdout: "", stderr: "" })) };
+  }
+
+  it("rejects a quotes-only command as empty", async () => {
+    const pi = createPi();
+    const ui = { setWorkingMessage: vi.fn() };
+    const result = await runCommand(pi as any, '""', "running...", ui);
+    expect(result).toEqual({ ok: false, reason: "empty", stderr: "" });
+    expect(pi.exec).not.toHaveBeenCalled();
+    expect(ui.setWorkingMessage).not.toHaveBeenCalled();
+  });
+
+  it("rejects a whitespace-only command as empty", async () => {
+    const pi = createPi();
+    const ui = { setWorkingMessage: vi.fn() };
+    const result = await runCommand(pi as any, "   ", "running...", ui);
+    expect(result).toEqual({ ok: false, reason: "empty", stderr: "" });
+    expect(pi.exec).not.toHaveBeenCalled();
+  });
+
+  it("executes a parsed command and reports success", async () => {
+    const pi = createPi();
+    const ui = { setWorkingMessage: vi.fn() };
+    const result = await runCommand(pi as any, "git add .", "running...", ui);
+    expect(result).toEqual({ ok: true });
+    expect(pi.exec).toHaveBeenCalledWith("git", ["add", "."]);
+    expect(ui.setWorkingMessage).toHaveBeenLastCalledWith();
   });
 });

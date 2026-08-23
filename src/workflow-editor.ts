@@ -120,6 +120,20 @@ function wrapHint(text: string, width: number): string[] {
   return lines;
 }
 
+function frameRow(theme: Theme, width: number, content: string): string {
+  const padded = content + " ".repeat(Math.max(0, width - visibleWidth(content)));
+  return theme.fg("border", "│") + padded + theme.fg("border", "│");
+}
+
+function frameLines(theme: Theme, width: number, content: string[]): string[] {
+  const innerW = width - 2;
+  return [
+    theme.fg("border", `╭${"─".repeat(innerW)}╮`),
+    ...content.map((line) => frameRow(theme, innerW, line)),
+    theme.fg("border", `╰${"─".repeat(innerW)}╯`),
+  ];
+}
+
 export function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
@@ -531,11 +545,15 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     return false;
   }
 
+  private commitIndexEdit(prompt: string, current: string, apply: (value: string) => void): void {
+    this.commitInput(`${prompt} (current: ${current}): `, (value) => {
+      return isNumericString(value) ? null : "Index must be a number.";
+    }, apply);
+  }
+
   private editStepIndex(target: LoopStep[], position: number, action: "msg" | "cmd", current: string): void {
     const label = action === "msg" ? "message" : "command";
-    this.commitInput(`${label} index for ${action} step (current: ${current}): `, (value) => {
-      return isNumericString(value) ? null : "Index must be a number.";
-    }, (value) => {
+    this.commitIndexEdit(`${label} index for ${action} step`, current, (value) => {
       const step = target[position]!;
       target[position] = action === "msg" ? { ...step, msg: value } : { ...step, cmd: value };
       this.popup("Step updated. Press s to save.");
@@ -545,9 +563,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
   private editRow(kind: SelectableKind, position: number): void {
     if (kind === "tree") {
       const current = this.draft.tree;
-      this.commitInput(`tree anchor message index (current: ${current}): `, (value) => {
-        return isNumericString(value) ? null : "Index must be a number.";
-      }, (value) => {
+      this.commitIndexEdit("tree anchor message index", current, (value) => {
         this.draft.tree = value;
         this.popup("Tree anchor updated. Press s to save.");
       });
@@ -560,9 +576,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     } else if (step.cmd !== undefined) {
       this.editStepIndex(target, position, "cmd", step.cmd);
     } else if (step.tree !== undefined) {
-      this.commitInput(`tree anchor message index (current: ${step.tree}): `, (value) => {
-        return isNumericString(value) ? null : "Index must be a number.";
-      }, (value) => {
+      this.commitIndexEdit("tree anchor message index", step.tree, (value) => {
         target[position] = { ...step, tree: value };
         this.popup("Step updated. Press s to save.");
       });
@@ -975,15 +989,9 @@ class Popup {
   invalidate(): void {}
 
   render(width: number): string[] {
-    const th = this.theme;
-    const innerW = width - 2;
-    const pad = (text: string) => text + " ".repeat(Math.max(0, innerW - visibleWidth(text)));
-    const row = (content: string) => th.fg("border", "│") + pad(content) + th.fg("border", "│");
-    const lines = [th.fg("border", `╭${"─".repeat(innerW)}╮`)];
-    for (const line of this.lines) lines.push(row(line));
-    if (this.hint !== "") lines.push(row(th.fg("dim", this.hint)));
-    lines.push(th.fg("border", `╰${"─".repeat(innerW)}╯`));
-    return lines;
+    const content = [...this.lines];
+    if (this.hint !== "") content.push(this.theme.fg("dim", this.hint));
+    return frameLines(this.theme, width, content);
   }
 }
 
@@ -998,15 +1006,9 @@ class InputPopup {
   invalidate(): void {}
 
   render(width: number): string[] {
-    const th = this.theme;
-    const innerW = width - 2;
-    const pad = (text: string) => text + " ".repeat(Math.max(0, innerW - visibleWidth(text)));
-    const row = (content: string) => th.fg("border", "│") + pad(content) + th.fg("border", "│");
-    const lines = [th.fg("border", `╭${"─".repeat(innerW)}╮`)];
-    for (const line of this.getLines(innerW - 2)) lines.push(row(th.fg("text", line)));
-    lines.push(row(th.fg("dim", " Enter to confirm · Esc to cancel")));
-    lines.push(th.fg("border", `╰${"─".repeat(innerW)}╯`));
-    return lines;
+    const content = this.getLines(width - 4).map((line) => this.theme.fg("text", line));
+    content.push(this.theme.fg("dim", " Enter to confirm · Esc to cancel"));
+    return frameLines(this.theme, width, content);
   }
 }
 
@@ -1174,14 +1176,12 @@ export class WorkflowEditorOverlay {
     const chromeRows = CHROME_ROWS + hintLines.length - 1 + Math.max(0, aboveLines.length - 1);
     const contentHeight = Math.max(1, Math.min(CONTENT_HEIGHT, maxHeight - chromeRows));
     const lines: string[] = [];
-    const pad = (text: string) => text + " ".repeat(Math.max(0, innerW - visibleWidth(text)));
-    const row = (content: string) => th.fg("border", "│") + pad(content) + th.fg("border", "│");
     const borderTop = th.fg("border", `╭${"─".repeat(innerW)}╮`);
     const borderSep = th.fg("border", `├${"─".repeat(innerW)}┤`);
     const borderBottom = th.fg("border", `╰${"─".repeat(innerW)}╯`);
 
     lines.push(borderTop);
-    lines.push(row(` ${th.fg("accent", th.bold(this.opts.title))}`));
+    lines.push(frameRow(th, innerW, ` ${th.fg("accent", th.bold(this.opts.title))}`));
 
     let tabBar = " ";
     for (let i = 0; i < this.opts.tabs.length; i++) {
@@ -1190,22 +1190,22 @@ export class WorkflowEditorOverlay {
       tabBar += i === this.activeTab ? th.fg("accent", th.bold(`[${tab.name}${marker}]`)) : th.fg("dim", `[${tab.name}${marker}]`);
       if (i < this.opts.tabs.length - 1) tabBar += " ";
     }
-    lines.push(row(tabBar));
+    lines.push(frameRow(th, innerW, tabBar));
 
     if (aboveLines.length > 0) {
-      for (const aboveLine of aboveLines) lines.push(row(aboveLine));
+      for (const aboveLine of aboveLines) lines.push(frameRow(th, innerW, aboveLine));
     } else {
       lines.push(borderSep);
     }
 
     const contentLines = this.active.render(innerW, contentHeight);
     for (let i = 0; i < contentHeight; i++) {
-      lines.push(row(contentLines[i] ?? ""));
+      lines.push(frameRow(th, innerW, contentLines[i] ?? ""));
     }
 
     lines.push(borderSep);
     for (const hintLine of hintLines) {
-      lines.push(row(th.fg("dim", hintLine)));
+      lines.push(frameRow(th, innerW, th.fg("dim", hintLine)));
     }
     lines.push(borderBottom);
     return lines;

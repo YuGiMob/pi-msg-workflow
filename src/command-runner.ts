@@ -1,7 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { errorMessage } from "./errors.js";
 
-export type CommandResult = { ok: true } | { ok: false; reason: "empty" | "unterminated" | "failed"; stderr: string; stdout?: string };
+export type CommandResult =
+  | { ok: true }
+  | { ok: false; reason: "empty"; stderr: string }
+  | { ok: false; reason: "unterminated"; stderr: string }
+  | { ok: false; reason: "failed"; stderr: string; stdout: string };
 
 export function splitCommand(command: string): string[] | null {
   const parts: string[] = [];
@@ -50,7 +54,7 @@ export function commandFailureMessage(num: string, result: Extract<CommandResult
   if (result.reason === "empty") return `Command ${num} is empty.`;
   if (result.reason === "unterminated") return `Command ${num} has an unterminated quote.`;
   if (result.stderr.trim() !== "") return `Command ${num} failed: ${result.stderr}`;
-  if (result.stdout !== undefined && result.stdout.trim() !== "") return `Command ${num} failed: ${result.stdout}`;
+  if (result.stdout.trim() !== "") return `Command ${num} failed: ${result.stdout}`;
   return `Command ${num} failed with no error output`;
 }
 
@@ -69,7 +73,7 @@ export async function runCommand(
     if (result.code !== 0) return { ok: false, reason: "failed", stderr: result.stderr, stdout: result.stdout };
     return { ok: true };
   } catch (err) {
-    return { ok: false, reason: "failed", stderr: errorMessage(err) };
+    return { ok: false, reason: "failed", stderr: errorMessage(err), stdout: "" };
   } finally {
     ui.setWorkingMessage();
   }

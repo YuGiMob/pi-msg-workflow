@@ -9,7 +9,6 @@ import type { WorkflowConfig, StartStep } from "./workflow-config.js";
 const SEND_START_TIMEOUT_MS = 5000;
 const SEND_MAX_ATTEMPTS = 3;
 const SEND_POLL_INTERVAL_MS = 25;
-const SEND_GRACE_PERIOD_MS = 2000;
 
 let workflowStopRequested = false;
 let workflowRunning = false;
@@ -54,8 +53,7 @@ async function sendAndWaitForTurn(
       return "failed";
     }
     let deadline = Date.now() + SEND_START_TIMEOUT_MS;
-    let graceUsed = false;
-    while (Date.now() < deadline) {
+    while (true) {
       if (countUserTextMatches(ctx.sessionManager.getBranch(), text) > before) {
         await ctx.waitForIdle();
         return "sent";
@@ -64,10 +62,9 @@ async function sendAndWaitForTurn(
       if (!ctx.isIdle()) {
         await ctx.waitForIdle();
         if (countUserTextMatches(ctx.sessionManager.getBranch(), text) > before) return "sent";
-        if (!graceUsed) {
-          deadline = Date.now() + SEND_GRACE_PERIOD_MS;
-          graceUsed = true;
-        }
+        deadline = Date.now() + SEND_START_TIMEOUT_MS;
+      } else if (Date.now() >= deadline) {
+        break;
       }
       await new Promise((resolve) => setTimeout(resolve, SEND_POLL_INTERVAL_MS));
     }
