@@ -2,7 +2,7 @@ import type { ExecResult, ExtensionAPI, ExtensionCommandContext, SessionEntry } 
 import { getMessages } from "./messages.js";
 import { getCommands } from "./commands.js";
 import { errorMessage } from "./errors.js";
-import { countLeadingPhaseMatches, countPhaseMatches, countUserTextMatches, findAnchorAfterMessage } from "./session-helpers.js";
+import { countLeadingPhaseMatches, countPhaseMatches, countUserTextMatches, findAnchorAfterMessage, lastAssistantMessageText } from "./session-helpers.js";
 import { runCommand, commandFailureMessage } from "./command-runner.js";
 import { runCommit, commitFailureMessage } from "./commit.js";
 import { getWorkflowConfig, loopSections, type WorkflowConfig, type StartStep } from "./workflow-config.js";
@@ -161,7 +161,7 @@ async function runStoredCommand(
 }
 
 async function runCommitStep(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<boolean> {
-  const result = await runCommit(pi, ctx.ui);
+  const result = await runCommit(pi, ctx.ui, lastAssistantMessageText(ctx.sessionManager.getBranch()));
   if (!result.ok) {
     ctx.ui.notify(commitFailureMessage(result), "error");
     return false;

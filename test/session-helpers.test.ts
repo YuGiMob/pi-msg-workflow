@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { userMessageText, countLeadingPhaseMatches, countPhaseMatches, findAnchorAfterMessage, countUserTextMatches } from "../src/session-helpers.js";
+import { userMessageText, countLeadingPhaseMatches, countPhaseMatches, findAnchorAfterMessage, countUserTextMatches, lastAssistantMessageText } from "../src/session-helpers.js";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 
 function userEntry(id: string, text: string): SessionEntry {
@@ -106,6 +106,33 @@ describe("countPhaseMatches", () => {
 
   it("returns zero for an empty session", () => {
     expect(countPhaseMatches([], ["a"])).toBe(0);
+  });
+});
+
+describe("lastAssistantMessageText", () => {
+  it("returns the text of the last assistant message", () => {
+    const entries = [userEntry("u1", "a"), assistantEntry("a1"), userEntry("u2", "b"), assistantEntry("a2")];
+    expect(lastAssistantMessageText(entries)).toBe("response");
+  });
+
+  it("skips non-assistant entries when looking for the last message", () => {
+    const entries = [assistantEntry("a1"), toolEntry("t1"), nonMessageEntry("c1", "compaction"), userEntry("u2", "b")];
+    expect(lastAssistantMessageText(entries)).toBe("response");
+  });
+
+  it("joins text blocks of an array content", () => {
+    const entry = { ...assistantEntry("a1"), message: { role: "assistant", content: [{ type: "text", text: "FIX: " }, { type: "text", text: "the bug" }] } } as unknown as SessionEntry;
+    expect(lastAssistantMessageText([entry])).toBe("FIX: the bug");
+  });
+
+  it("ignores assistant messages with empty text", () => {
+    const entries = [userEntry("u1", "a"), { ...assistantEntry("a1"), message: { role: "assistant", content: "" } } as unknown as SessionEntry, assistantEntry("a2")];
+    expect(lastAssistantMessageText(entries)).toBe("response");
+  });
+
+  it("returns undefined when there is no assistant message", () => {
+    expect(lastAssistantMessageText([])).toBeUndefined();
+    expect(lastAssistantMessageText([userEntry("u1", "a")])).toBeUndefined();
   });
 });
 

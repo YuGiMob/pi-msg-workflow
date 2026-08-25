@@ -42,6 +42,40 @@ describe("runCommit", () => {
     expect(pi.exec).toHaveBeenCalledWith("git", ["commit", "-m", "Update src/file0.ts, src/file1.ts, src/file2.ts, src/file3.ts, src/file4.ts and 5 more"]);
   });
 
+  it("uses the provided message for the commit", async () => {
+    const pi = createPi(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "status") return { code: 0, stdout: " M x\n", stderr: "" };
+      if (cmd === "git" && args[0] === "add") return { code: 0, stdout: "", stderr: "" };
+      if (cmd === "git" && args[0] === "diff") return { code: 0, stdout: "x\n", stderr: "" };
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    const result = await runCommit(pi as any, { setWorkingMessage: vi.fn() }, "NEW: add the thing");
+    expect(result).toEqual({ ok: true, committed: true });
+    expect(pi.exec).toHaveBeenCalledWith("git", ["commit", "-m", "NEW: add the thing"]);
+  });
+
+  it("trims the provided message", async () => {
+    const pi = createPi(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "status") return { code: 0, stdout: " M x\n", stderr: "" };
+      if (cmd === "git" && args[0] === "add") return { code: 0, stdout: "", stderr: "" };
+      if (cmd === "git" && args[0] === "diff") return { code: 0, stdout: "x\n", stderr: "" };
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    await runCommit(pi as any, { setWorkingMessage: vi.fn() }, "  FIX: the bug  ");
+    expect(pi.exec).toHaveBeenCalledWith("git", ["commit", "-m", "FIX: the bug"]);
+  });
+
+  it("falls back to the generated message when the provided message is empty", async () => {
+    const pi = createPi(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "status") return { code: 0, stdout: " M x\n", stderr: "" };
+      if (cmd === "git" && args[0] === "add") return { code: 0, stdout: "", stderr: "" };
+      if (cmd === "git" && args[0] === "diff") return { code: 0, stdout: "x\n", stderr: "" };
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    await runCommit(pi as any, { setWorkingMessage: vi.fn() }, "   ");
+    expect(pi.exec).toHaveBeenCalledWith("git", ["commit", "-m", "Update x"]);
+  });
+
   it("reports a failed git status", async () => {
     const pi = createPi(async () => ({ code: 1, stdout: "", stderr: "boom" }));
     const result = await runCommit(pi as any, { setWorkingMessage: vi.fn() });

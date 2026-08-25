@@ -31,7 +31,7 @@ pi install npm:pi-msg-workflow
 /workflow
 ```
 
-The package ships with default messages (`1` to `16`), a default command (`1` = `git add .`), and four workflows.
+The package ships with default messages (`1` to `17`), a default command (`1` = `git add .`), and four workflows.
 
 ## Commands
 
@@ -105,7 +105,7 @@ Commands that take a number offer Tab autocomplete.
 
 ### The default workflow (3)
 
-Workflow 3 is the default: each round starts with a `{ "tree": "0" }` step that starts a new session, runs workflow 4 (online research, adversarial review, implementation, and a commit), starts another new session, and then runs workflow 2 (deduplication, simplification, and bug reduction, which also commits) — so both workflows begin with a fresh read of the codebase.
+Workflow 3 is the default: with `rounds` set to 4, each round starts with a `{ "tree": "0" }` step that starts a new session, runs workflow 4 (online research, adversarial review, implementation, and a commit), starts another new session, and then runs workflow 2 (deduplication, simplification, and bug reduction, which also commits) — so both workflows begin with a fresh read of the codebase and commit after every run (8 commits in a full run).
 #### `rounds`
 
 Number of review-loop iterations (default `2`, max `5`). Each loop section repeats `rounds` times. `/workflow <workflow> <n>` overrides it for a single run.
@@ -127,14 +127,14 @@ Ordered steps repeated each round. `loop` is the first loop section; additional 
 | `{ "cmd": "1", "onlyIfChanges": true }` | Perform command 1 only when `git status --porcelain` shows changes. |
 | `{ "workflow": "2" }` | Run workflow 2 (its start phase, review rounds, and finally phase) and wait for it to finish. |
 | `{ "workflow": "2", "onlyIfChanges": true }` | Run workflow 2 only when `git status --porcelain` shows changes. |
-| `{ "commit": true }` | Stage all changes and commit them with a message derived from the changed files. |
+| `{ "commit": true }` | Stage all changes and commit them with the agent's last response as the message when one was requested (e.g. by message 17), falling back to a message derived from the changed files. |
 
 `onlyIfChanges` runs `git status --porcelain` in the project directory, so it requires the project to be a git repository. A msg, cmd, or workflow step with `onlyIfChanges` is skipped when there are no changes.
-Message indices refer to the numbered message store: `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store: `/cmd 1`, `/change-cmd 1 "git add ."`, and `{ "cmd": "1" }` all address the same command. The default message store is numbered `1` to `16`: `1` to `8` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix, summarize), `9` to `15` serve workflow 2 (combined review, value check, implement, closer look, fix, validate, summarize), and `16` serves workflow 4 (online research).
+Message indices refer to the numbered message store: `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store: `/cmd 1`, `/change-cmd 1 "git add ."`, and `{ "cmd": "1" }` all address the same command. The default message store is numbered `1` to `17`: `1` to `7` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix), `9` to `15` serve workflow 2 (combined review, value check, implement, closer look, fix, validate, summarize), `16` serves workflow 4 (online research), and `17` requests the commit message in all default workflows.
 
 #### `finally`
 
-Ordered steps run once after the loop finishes, unless a step fails and `finallyOnError` is not enabled. Each step is `{ "msg": "n" }`, `{ "cmd": "n" }`, or `{ "workflow": "n" }`. Workflow 1's finally phase ends with a summary of all changes since the last commit; workflows 2 and 4 end with a commit step.
+Ordered steps run once after the loop finishes, unless a step fails and `finallyOnError` is not enabled. Each step is `{ "msg": "n" }`, `{ "cmd": "n" }`, or `{ "workflow": "n" }`. All default workflows end with the commit-message request (message 17) followed by a commit step that uses the agent's response as the literal commit message.
 
 #### `finallyOnError`
 
@@ -165,15 +165,15 @@ Workflow 2 is a focused review loop over duplicated logic, unnecessary complexit
 | `{ "cmd": "1", "onlyIfChanges": true }` | Stage the changes only when there are changes. |
 | `{ "msg": "15" }` | Summarize all of the changes since the last commit. |
 
-The tree step resets the context to the response of message 1, the shared read-the-codebase step of this workflow. Its finally phase summarizes the changes and commits them via a `{ "commit": true }` step.
+The tree step resets the context to the response of message 1, the shared read-the-codebase step of this workflow. Its finally phase asks for a commit message (message 17) and commits with the agent's response as the literal message.
 
 ### Workflow 3: explore, improve, commit, then review
 
-Workflow 3 runs two contained workflows per round: workflow 4 (online research, adversarial review, implementation, and a commit in its finally phase) followed by workflow 2 (deduplication, simplification, and bug reduction, which also commits in its finally phase). Each round starts with a `{ "tree": "0" }` step that starts a new session, and another `{ "tree": "0" }` step runs between the two workflows — so both workflow 4 and workflow 2 begin with a fresh read of the codebase (message 1 is sent again) and each commits its own changes.
+Workflow 3 runs two contained workflows per round: workflow 4 (online research, adversarial review, implementation, and a commit in its finally phase) followed by workflow 2 (deduplication, simplification, and bug reduction, which also commits in its finally phase). Each round starts with a `{ "tree": "0" }` step that starts a new session, and another `{ "tree": "0" }` step runs between the two workflows — so both workflow 4 and workflow 2 begin with a fresh read of the codebase (message 1 is sent again) and each commits its own changes with a message it wrote itself (message 17).
 
 ### Workflow 4: online research and adversarial review
 
-Workflow 4 is the exploration workflow contained in workflow 3. Its start phase reads the codebase, searches the web for similar projects with similar features, checks whether the proposed improvements are worth implementing, and implements them. Its loop is the same review loop as workflow 1 (closer look, fix, validate, stage), and its finally phase commits the changes via a `{ "commit": true }` step, which stages all changes and commits them with a message derived from the changed files.
+Workflow 4 is the exploration workflow contained in workflow 3. Its start phase reads the codebase, searches the web for similar projects with similar features, checks whether the proposed improvements are worth implementing, and implements them. Its loop is the same review loop as workflow 1 (closer look, fix, validate, stage), and its finally phase asks for a commit message (message 17) and commits with the agent's response as the literal message.
 
 ## The editor
 

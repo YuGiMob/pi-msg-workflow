@@ -17,7 +17,8 @@
       { "cmd": "1", "onlyIfChanges": true }
     ],
     "finally": [
-      { "msg": "8" }
+      { "msg": "17" },
+      { "commit": true }
     ]
   },
   "2": {
@@ -37,12 +38,12 @@
       { "cmd": "1", "onlyIfChanges": true }
     ],
     "finally": [
-      { "msg": "15" },
+      { "msg": "17" },
       { "commit": true }
     ]
   },
   "3": {
-    "rounds": 2,
+    "rounds": 4,
     "start": [],
     "loop": [
       { "tree": "0" },
@@ -69,6 +70,7 @@
       { "cmd": "1", "onlyIfChanges": true }
     ],
     "finally": [
+      { "msg": "17" },
       { "commit": true }
     ]
   }

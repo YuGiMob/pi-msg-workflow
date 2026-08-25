@@ -19,7 +19,7 @@ function commitMessage(nameOnlyOutput: string): string {
   return `Update ${shown.join(", ")}${suffix}`;
 }
 
-export async function runCommit(pi: ExtensionAPI, ui: { setWorkingMessage(message?: string): void }): Promise<CommitResult> {
+export async function runCommit(pi: ExtensionAPI, ui: { setWorkingMessage(message?: string): void }, message?: string): Promise<CommitResult> {
   ui.setWorkingMessage("Committing changes...");
   try {
     const status = await pi.exec("git", ["status", "--porcelain"]);
@@ -29,7 +29,8 @@ export async function runCommit(pi: ExtensionAPI, ui: { setWorkingMessage(messag
     if (add.code !== 0) return { ok: false, reason: "failed", stderr: add.stderr, stdout: add.stdout };
     const names = await pi.exec("git", ["diff", "--cached", "--name-only"]);
     if (names.code !== 0) return { ok: false, reason: "failed", stderr: names.stderr, stdout: names.stdout };
-    const commit = await pi.exec("git", ["commit", "-m", commitMessage(names.stdout)]);
+    const text = message !== undefined && message.trim() !== "" ? message.trim() : commitMessage(names.stdout);
+    const commit = await pi.exec("git", ["commit", "-m", text]);
     if (commit.code !== 0) return { ok: false, reason: "failed", stderr: commit.stderr, stdout: commit.stdout };
     return { ok: true, committed: true };
   } catch (err) {

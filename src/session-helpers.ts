@@ -5,8 +5,8 @@ interface TextBlock {
   text?: string;
 }
 
-export function userMessageText(entry: SessionEntry): string | undefined {
-  if (entry.type !== "message" || entry.message.role !== "user") return undefined;
+function messageText(entry: SessionEntry, role: "user" | "assistant"): string | undefined {
+  if (entry.type !== "message" || entry.message.role !== role) return undefined;
   const content = entry.message.content;
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -14,6 +14,18 @@ export function userMessageText(entry: SessionEntry): string | undefined {
       .filter((block) => block?.type === "text")
       .map((block) => block.text ?? "")
       .join("");
+  }
+  return undefined;
+}
+
+export function userMessageText(entry: SessionEntry): string | undefined {
+  return messageText(entry, "user");
+}
+
+export function lastAssistantMessageText(entries: SessionEntry[]): string | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const text = messageText(entries[i]!, "assistant");
+    if (text !== undefined && text.trim() !== "") return text;
   }
   return undefined;
 }

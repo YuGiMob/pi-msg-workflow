@@ -1378,7 +1378,7 @@ describe("workflow extension", () => {
     const ctx = createCtx(fullPhaseA());
     await commands["workflow"].handler("1", ctx);
     expect(pi.exec).toHaveBeenCalledWith("git", ["add", "-A"]);
-    expect(pi.exec).toHaveBeenCalledWith("git", ["commit", "-m", "Update x"]);
+    expect(pi.exec).toHaveBeenCalledWith("git", ["commit", "-m", "response"]);
     expect(ctx.ui.notify).toHaveBeenCalledWith("Workflow 1 complete: 1 round", "info");
   });
 
@@ -1416,8 +1416,29 @@ describe("workflow extension", () => {
     });
     const ctx = createCtx(fullPhaseA());
     await commands["workflow"].handler("1", ctx);
-    expect(pi.exec).toHaveBeenCalledWith("git", ["commit", "-m", "Update x"]);
+    expect(pi.exec).toHaveBeenCalledWith("git", ["commit", "-m", "response"]);
     expect(ctx.ui.notify).toHaveBeenCalledWith("Workflow 1 complete: 1 round", "info");
+  });
+
+  it("uses the agent's last response as the commit message", async () => {
+    holder.workflow = {
+      "1": { rounds: 1, start: [], loop: [{ tree: "1" }, { msg: "6" }], finally: [{ commit: true }] },
+    };
+    pi.exec = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "status") return { code: 0, stdout: " M x\n", stderr: "" };
+      if (cmd === "git" && args[0] === "add") return { code: 0, stdout: "", stderr: "" };
+      if (cmd === "git" && args[0] === "diff") return { code: 0, stdout: "x\n", stderr: "" };
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    pi.sendUserMessage = vi.fn((content: string) => {
+      const id = String(holder.branch.length);
+      holder.branch.push(userEntry(`u${id}`, content));
+      holder.branch.push({ ...assistantEntry(`a${id}`), message: { role: "assistant", content: "IMPROVE: extract the shared helper" } });
+      holder.state.active = true;
+    });
+    const ctx = createCtx(fullPhaseA());
+    await commands["workflow"].handler("1", ctx);
+    expect(pi.exec).toHaveBeenCalledWith("git", ["commit", "-m", "IMPROVE: extract the shared helper"]);
   });
 
   it("resets the context to the session root when the tree step is 0", async () => {
