@@ -13,5 +13,6 @@
   "12": "Take a closer look at all of the changes in this codebase. You can see the changes via 'git diff --staged'",
   "13": "If your review found any issues with the staged changes, fix them now",
   "14": "Take a look at the git status and git diff to validate that the changes you wanted to make are the same as the changes you actually did",
-  "15": "Since the last commit a couple of changes were made to this codebase. Summarize all of the changes so far"
+  "15": "Since the last commit a couple of changes were made to this codebase. Summarize all of the changes so far",
+  "16": "Search the web for similar projects with similar features and identify improvements that could be applied to this codebase"
 }

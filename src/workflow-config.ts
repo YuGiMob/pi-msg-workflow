@@ -7,18 +7,26 @@ export interface LoopStep {
   tree?: string;
   cmd?: string;
   msg?: string;
+  workflow?: string;
+  commit?: boolean;
   onlyIfChanges?: boolean;
 }
 
 export interface StartStep {
   msg?: string;
   cmd?: string;
+  workflow?: string;
+  commit?: boolean;
 }
 
 export interface WorkflowConfig {
   rounds: number;
   start: StartStep[];
   loop: LoopStep[];
+  loop2?: LoopStep[];
+  loop3?: LoopStep[];
+  loop4?: LoopStep[];
+  loop5?: LoopStep[];
   finally: StartStep[];
   finallyOnError?: boolean;
 }
@@ -68,7 +76,8 @@ export function isNumericString(value: unknown): value is string {
 function isStep(value: unknown): value is LoopStep {
   const entry = stepAction(value);
   if (entry === null) return false;
-  if (entry.action !== "tree" && entry.action !== "msg" && entry.action !== "cmd") return false;
+  if (entry.action === "commit") return entry.content === true && !("onlyIfChanges" in entry.step);
+  if (entry.action !== "tree" && entry.action !== "msg" && entry.action !== "cmd" && entry.action !== "workflow") return false;
   if (!isNumericString(entry.content)) return false;
   if (entry.action === "tree" && "onlyIfChanges" in entry.step) return false;
   return !("onlyIfChanges" in entry.step) || typeof entry.step.onlyIfChanges === "boolean";
@@ -77,7 +86,8 @@ function isStep(value: unknown): value is LoopStep {
 function isStartStep(value: unknown): value is StartStep {
   const entry = stepAction(value);
   if (entry === null) return false;
-  if (entry.action !== "msg" && entry.action !== "cmd") return false;
+  if (entry.action === "commit") return entry.content === true;
+  if (entry.action !== "msg" && entry.action !== "cmd" && entry.action !== "workflow") return false;
   return !("onlyIfChanges" in entry.step) && isNumericString(entry.content);
 }
 
@@ -91,7 +101,7 @@ function parseStartSteps(
   const value = input[field];
   if (value === undefined) return fallback.map((step) => ({ ...step }));
   if (Array.isArray(value) && value.every((step) => isStartStep(step))) return value as StartStep[];
-  errors.push(`${tag}Invalid ${field}: must be an array of msg/cmd steps. Using the default.`);
+  errors.push(`${tag}Invalid ${field}: must be an array of msg/cmd/workflow/commit steps. Using the default.`);
   return fallback.map((step) => ({ ...step }));
 }
 
@@ -119,31 +129,47 @@ function parseConfig(input: Record<string, unknown>, errors: string[], label: st
   const start = parseStartSteps(input, errors, tag, "start", DEFAULT_START);
   const finallySteps = parseStartSteps(input, errors, tag, "finally", DEFAULT_FINALLY);
 
-  let loop: LoopStep[] = DEFAULT_LOOP.map((step) => ({ ...step }));
-  if (input.loop !== undefined) {
-    if (Array.isArray(input.loop)) {
-      const steps: LoopStep[] = [];
-      for (const entry of input.loop) {
-        if (isStep(entry)) {
-          steps.push(entry);
-        } else {
-          errors.push(`${tag}Invalid loop step ${JSON.stringify(entry)}. Skipped.`);
-        }
-      }
-      if (steps.length > 0) {
-        loop = steps;
-      } else {
-        errors.push(`${tag}No valid loop steps. Using the default loop.`);
-      }
-    } else {
-      errors.push(`${tag}Invalid loop: must be an array of steps. Using the default loop.`);
+  const loop = parseLoopSection(input, errors, tag, "loop", DEFAULT_LOOP);
+  const loop2 = parseLoopSection(input, errors, tag, "loop2", []);
+  const loop3 = parseLoopSection(input, errors, tag, "loop3", []);
+  const loop4 = parseLoopSection(input, errors, tag, "loop4", []);
+  const loop5 = parseLoopSection(input, errors, tag, "loop5", []);
+
+  if (loop.length > 0 && loop[0]!.tree === undefined) {
+    errors.push(`${tag}The first step of the loop must be a tree step (context reset).`);
+  }
+  for (const [key, section] of [["loop2", loop2], ["loop3", loop3], ["loop4", loop4], ["loop5", loop5]] as const) {
+    if (section.length > 0 && section[0]!.tree === undefined) {
+      errors.push(`${tag}The first step of ${key} must be a tree step (context reset).`);
     }
   }
 
-  if (loop[0]?.tree === undefined) {
-    errors.push(`${tag}The first step of the loop must be a tree step (context reset).`);
+  const config: WorkflowConfig = { rounds, start, loop, finally: finallySteps, finallyOnError };
+  if (loop2.length > 0) config.loop2 = loop2;
+  if (loop3.length > 0) config.loop3 = loop3;
+  if (loop4.length > 0) config.loop4 = loop4;
+  if (loop5.length > 0) config.loop5 = loop5;
+  return config;
+}
+
+function parseLoopSection(input: Record<string, unknown>, errors: string[], tag: string, key: string, fallback: LoopStep[]): LoopStep[] {
+  const value = input[key];
+  if (value === undefined) return fallback.map((step) => ({ ...step }));
+  if (Array.isArray(value)) {
+    const steps: LoopStep[] = [];
+    for (const entry of value) {
+      if (isStep(entry)) {
+        steps.push(entry);
+      } else {
+        errors.push(`${tag}Invalid ${key} step ${JSON.stringify(entry)}. Skipped.`);
+      }
+    }
+    if (steps.length > 0) return steps;
+    errors.push(`${tag}No valid ${key} steps. Using the default.`);
+    return fallback.map((step) => ({ ...step }));
   }
-  return { rounds, start, loop, finally: finallySteps, finallyOnError };
+  errors.push(`${tag}Invalid ${key}: must be an array of steps. Using the default.`);
+  return fallback.map((step) => ({ ...step }));
 }
 
 function isSingleConfig(value: Record<string, unknown>): boolean {
@@ -189,11 +215,11 @@ export function getWorkflows(): { workflows: Record<string, WorkflowConfig>; err
   return { workflows: parseWorkflows(raw, errors), errors, fallback: false };
 }
 
-export function getWorkflowConfig(index = "1"): { config: WorkflowConfig; errors: string[]; exists: boolean; fallback: boolean } {
+export function getWorkflowConfig(index = "1"): { config: WorkflowConfig; errors: string[]; exists: boolean; fallback: boolean; workflows: Record<string, WorkflowConfig> } {
   const { workflows, errors, fallback } = getWorkflows();
   const config = workflows[index];
-  if (config !== undefined) return { config, errors, exists: true, fallback };
-  return { config: defaultConfig(), errors, exists: fallback && index === "1", fallback };
+  if (config !== undefined) return { config, errors, exists: true, fallback, workflows };
+  return { config: defaultConfig(), errors, exists: fallback && index === "1", fallback, workflows };
 }
 
 function readWorkflowEntries(): Record<string, unknown> {
@@ -231,8 +257,8 @@ export function deleteWorkflowConfig(index: string): void {
   writeWorkflowEntries(workflows);
 }
 
-function collectStepRefs(config: WorkflowConfig, fields: ("msg" | "cmd" | "tree")[]): string[] {
-  const steps: LoopStep[] = [...config.start, ...config.finally, ...config.loop];
+function collectStepRefs(config: WorkflowConfig, fields: ("msg" | "cmd" | "tree" | "workflow")[]): string[] {
+  const steps: LoopStep[] = [...config.start, ...config.finally, ...loopSections(config).flat()];
   const indices: string[] = [];
   for (const step of steps) {
     for (const field of fields) {
@@ -244,20 +270,60 @@ function collectStepRefs(config: WorkflowConfig, fields: ("msg" | "cmd" | "tree"
 }
 
 export function referencedIndices(config: WorkflowConfig): string[] {
-  return collectStepRefs(config, ["tree", "msg"]);
+  return collectStepRefs(config, ["tree", "msg"]).filter((num) => num !== "0");
 }
 
 export function referencedCommands(config: WorkflowConfig): string[] {
   return collectStepRefs(config, ["cmd"]);
 }
 
+export function referencedWorkflows(config: WorkflowConfig): string[] {
+  return collectStepRefs(config, ["workflow"]);
+}
+
+export function loopSections(config: WorkflowConfig): LoopStep[][] {
+  const sections = [config.loop];
+  for (const key of ["loop2", "loop3", "loop4", "loop5"] as const) {
+    const section = config[key];
+    if (section !== undefined) sections.push(section);
+  }
+  return sections;
+}
+
+export function totalLoopSteps(config: WorkflowConfig): number {
+  return loopSections(config).reduce((sum, section) => sum + section.length, 0);
+}
+
+export function findWorkflowCycle(workflows: Record<string, WorkflowConfig>, start: string): string[] | null {
+  const path: string[] = [];
+  const visited = new Set<string>();
+  const dfs = (node: string): string[] | null => {
+    const at = path.indexOf(node);
+    if (at !== -1) return [...path.slice(at), node];
+    if (visited.has(node)) return null;
+    const config = workflows[node];
+    if (config === undefined) return null;
+    visited.add(node);
+    path.push(node);
+    for (const ref of referencedWorkflows(config)) {
+      const cycle = dfs(ref);
+      if (cycle !== null) return cycle;
+    }
+    path.pop();
+    return null;
+  };
+  return dfs(start);
+}
+
 export function missingReferences(
   config: WorkflowConfig,
   messages: Record<string, string>,
   commands: Record<string, string>,
-): { messages: string[]; commands: string[] } {
+  workflows: Record<string, WorkflowConfig>,
+): { messages: string[]; commands: string[]; workflows: string[] } {
   return {
     messages: referencedIndices(config).filter((num) => !messages[num]),
     commands: referencedCommands(config).filter((num) => !commands[num]),
+    workflows: referencedWorkflows(config).filter((num) => !workflows[num]),
   };
 }

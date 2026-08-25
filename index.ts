@@ -5,7 +5,7 @@ import { getCommands, setCommands } from "./src/commands.js";
 import { MAX_ROUNDS, WORKFLOW_FILE, MESSAGES_FILE, COMMANDS_FILE } from "./src/constants.js";
 import { compareNumericKeys } from "./src/json-file.js";
 import { runCommand, commandFailureMessage } from "./src/command-runner.js";
-import { getWorkflows, getWorkflowConfig, missingReferences, isNumericString, type StartStep, type LoopStep } from "./src/workflow-config.js";
+import { getWorkflows, getWorkflowConfig, missingReferences, findWorkflowCycle, loopSections, totalLoopSteps, isNumericString, type StartStep, type LoopStep, type WorkflowConfig } from "./src/workflow-config.js";
 import { resetUserData } from "./src/user-data.js";
 import { WorkflowEditorOverlay, WorkflowTab, MessagesTab, CommandsTab, MAX_OVERLAY_HEIGHT_RATIO, type EditorTab } from "./src/workflow-editor.js";
 import { errorMessage } from "./src/errors.js";
@@ -27,10 +27,16 @@ function clip(text: string | undefined, max: number): string {
   return text.length > max ? `${text.substring(0, max)}...` : text;
 }
 
-function describeStep(step: LoopStep, messages: Record<string, string>, commands: Record<string, string>): string {
+function describeStep(step: LoopStep, messages: Record<string, string>, commands: Record<string, string>, workflows: Record<string, WorkflowConfig>): string {
   const suffix = step.onlyIfChanges ? " (if-changes)" : "";
   if (step.msg !== undefined) return `msg ${step.msg}${suffix}: ${clip(messages[step.msg], 50)}`;
   if (step.cmd !== undefined) return `cmd ${step.cmd}${suffix}: ${clip(commands[step.cmd], 50)}`;
+  if (step.workflow !== undefined) {
+    const config = workflows[step.workflow];
+    return `wf ${step.workflow}${suffix}: ${config === undefined ? "(missing)" : `${config.rounds} round${config.rounds === 1 ? "" : "s"} (${config.start.length} start, ${totalLoopSteps(config)} loop, ${config.finally.length} finally)`}`;
+  }
+  if (step.commit === true) return "commit: stage and commit all changes";
+  if (step.tree === "0") return "tree 0: new session";
   return `tree ${step.tree!}`;
 }
 function storeCompletions(store: Record<string, string>, noun: string, prefix: string): AutocompleteItem[] {
@@ -274,7 +280,7 @@ export default function (pi: ExtensionAPI) {
         .filter((num) => num.startsWith(prefix))
         .map((num) => {
           const config = workflows[num]!;
-          return { value: num, label: `Workflow ${num}: ${config.rounds} rounds (${config.start.length} start, ${config.loop.length} loop, ${config.finally.length} finally)` };
+          return { value: num, label: `Workflow ${num}: ${config.rounds} rounds (${config.start.length} start, ${totalLoopSteps(config)} loop, ${config.finally.length} finally)` };
         });
       for (const flag of ["dry", "list"]) {
         if (flag.startsWith(prefix)) items.push({ value: flag, label: flag });
@@ -294,7 +300,7 @@ export default function (pi: ExtensionAPI) {
         }
         const lines = keys.map((num) => {
           const config = workflows[num]!;
-          return `  ${num}: ${config.rounds} round${config.rounds === 1 ? "" : "s"} (${config.start.length} start, ${config.loop.length} loop, ${config.finally.length} finally)`;
+          return `  ${num}: ${config.rounds} round${config.rounds === 1 ? "" : "s"} (${config.start.length} start, ${totalLoopSteps(config)} loop, ${config.finally.length} finally)`;
         });
         ctx.ui.notify(`Workflows:\n${lines.join("\n")}`, "info");
         return;
@@ -305,8 +311,8 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       const numeric = tokens.filter(isNumericString);
-      const index = numeric[0] ?? "1";
-      const { config, errors, exists, fallback } = getWorkflowConfig(index);
+      const index = numeric[0] ?? "3";
+      const { config, errors, exists, fallback, workflows } = getWorkflowConfig(index);
       if (!exists) {
         if (fallback && errors.length > 0) {
           notifyConfigErrors(ctx, errors);
@@ -318,7 +324,7 @@ export default function (pi: ExtensionAPI) {
       notifyConfigErrors(ctx, errors);
       const messages = getMessages();
       const commands = getCommands();
-      const { messages: missing, commands: missingCommands } = missingReferences(config, messages, commands);
+      const { messages: missing, commands: missingCommands, workflows: missingWorkflows } = missingReferences(config, messages, commands, workflows);
       if (missing.length > 0) {
         ctx.ui.notify(`Missing messages in messages.json: ${missing.join(", ")}. Restore the default stores with /workflow-reset or add them with /change-msg.`, "error");
         return;
@@ -327,15 +333,26 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`Missing commands in commands.json: ${missingCommands.join(", ")}. Restore the default stores with /workflow-reset or add them with /change-cmd.`, "error");
         return;
       }
-      if (config.loop.length === 0 || config.loop[0]!.tree === undefined) {
-        ctx.ui.notify("The first step of the loop must be a tree step (context reset)", "error");
+      if (missingWorkflows.length > 0) {
+        ctx.ui.notify(`Missing workflows in workflow.json: ${missingWorkflows.join(", ")}. Create them with /workflow-edit (press w).`, "error");
+        return;
+      }
+      const cycle = findWorkflowCycle(workflows, index);
+      if (cycle !== null) {
+        ctx.ui.notify(`Circular workflow reference: ${cycle.join(" → ")}. Fix workflow.json first.`, "error");
+        return;
+      }
+      const badSection = loopSections(config).find((section) => section.length === 0 || section[0]!.tree === undefined);
+      if (badSection !== undefined) {
+        ctx.ui.notify("The first step of every loop section must be a tree step (context reset)", "error");
         return;
       }
       const rounds = numeric[1] === undefined ? config.rounds : parseRounds(numeric[1], config.rounds);
       if (dryRun) {
         const describeSteps = (steps: StartStep[] | LoopStep[]) =>
-          steps.length > 0 ? steps.map((step) => describeStep(step, messages, commands)).join(", ") : "(none)";
-        ctx.ui.notify(`[pi-msg-workflow] Dry run: Workflow ${index}, ${rounds} round${rounds === 1 ? "" : "s"}\nstart: ${describeSteps(config.start)}\nloop: ${describeSteps(config.loop)}\nfinally: ${describeSteps(config.finally)}`, "info");
+          steps.length > 0 ? steps.map((step) => describeStep(step, messages, commands, workflows)).join(", ") : "(none)";
+        const loopLines = loopSections(config).map((section, i) => `loop${i === 0 ? "" : ` ${i + 1}`}: ${describeSteps(section)}`).join("\n");
+        ctx.ui.notify(`[pi-msg-workflow] Dry run: Workflow ${index}, ${rounds} round${rounds === 1 ? "" : "s"}\nstart: ${describeSteps(config.start)}\n${loopLines}\nfinally: ${describeSteps(config.finally)}`, "info");
         return;
       }
       await runWorkflow(pi, ctx, config, index, rounds, messages);

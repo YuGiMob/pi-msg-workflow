@@ -2,9 +2,10 @@ import type { ExecResult, ExtensionAPI, ExtensionCommandContext, SessionEntry } 
 import { getMessages } from "./messages.js";
 import { getCommands } from "./commands.js";
 import { errorMessage } from "./errors.js";
-import { countLeadingPhaseMatches, countUserTextMatches, findAnchorAfterMessage } from "./session-helpers.js";
+import { countLeadingPhaseMatches, countPhaseMatches, countUserTextMatches, findAnchorAfterMessage } from "./session-helpers.js";
 import { runCommand, commandFailureMessage } from "./command-runner.js";
-import type { WorkflowConfig, StartStep } from "./workflow-config.js";
+import { runCommit, commitFailureMessage } from "./commit.js";
+import { getWorkflowConfig, loopSections, type WorkflowConfig, type StartStep } from "./workflow-config.js";
 
 const SEND_START_TIMEOUT_MS = 5000;
 const SEND_MAX_ATTEMPTS = 3;
@@ -12,6 +13,7 @@ const SEND_POLL_INTERVAL_MS = 25;
 
 let workflowStopRequested = false;
 let workflowRunning = false;
+const workflowStack: string[] = [];
 
 export function isWorkflowRunning(): boolean {
   return workflowRunning;
@@ -121,8 +123,8 @@ export function notifyNavigationStatus(
   return true;
 }
 
-async function checkForChanges(pi: ExtensionAPI, ctx: ExtensionCommandContext, round: number, rounds: number): Promise<boolean | null> {
-  ctx.ui.setWorkingMessage(`Round ${round}/${rounds}: checking for changes...`);
+async function checkForChanges(pi: ExtensionAPI, ctx: ExtensionCommandContext, round: number, rounds: number, sectionLabel: string): Promise<boolean | null> {
+  ctx.ui.setWorkingMessage(`${sectionLabel}Round ${round}/${rounds}: checking for changes...`);
   let statusResult: ExecResult;
   try {
     statusResult = await pi.exec("git", ["status", "--porcelain"]);
@@ -135,7 +137,7 @@ async function checkForChanges(pi: ExtensionAPI, ctx: ExtensionCommandContext, r
     return null;
   }
   const changed = statusResult.stdout.trim().length > 0;
-  if (!changed) ctx.ui.notify(`Round ${round}/${rounds}: no changes detected, skipping step`, "info");
+  if (!changed) ctx.ui.notify(`${sectionLabel}Round ${round}/${rounds}: no changes detected, skipping step`, "info");
   return changed;
 }
 
@@ -155,6 +157,16 @@ async function runStoredCommand(
     ctx.ui.notify(commandFailureMessage(num, result), "error");
     return false;
   }
+  return true;
+}
+
+async function runCommitStep(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<boolean> {
+  const result = await runCommit(pi, ctx.ui);
+  if (!result.ok) {
+    ctx.ui.notify(commitFailureMessage(result), "error");
+    return false;
+  }
+  if (!result.committed) ctx.ui.notify("Nothing to commit", "info");
   return true;
 }
 
@@ -202,6 +214,10 @@ async function runOncePhase(
       if (!(await sendStoredMessage(pi, ctx, step.msg, `Sending message ${step.msg}...`))) return false;
     } else if (step.cmd !== undefined) {
       if (!(await runStoredCommand(pi, ctx, step.cmd, "Running "))) return false;
+    } else if (step.workflow !== undefined) {
+      if (!(await runSubWorkflow(pi, ctx, step.workflow))) return false;
+    } else if (step.commit === true) {
+      if (!(await runCommitStep(pi, ctx))) return false;
     }
   }
   return true;
@@ -215,32 +231,93 @@ async function runPhases(
   matched: number,
 ): Promise<boolean> {
   if (!(await runOncePhase(pi, ctx, config.start, matched))) return false;
-  for (let round = 1; round <= rounds; round++) {
-    for (const step of config.loop) {
-      if (workflowStopRequested) {
-        ctx.ui.notify("Workflow stopped", "info");
-        return false;
-      }
-      if (step.tree !== undefined) {
-        ctx.ui.setWorkingMessage(`Round ${round}/${rounds}: resetting context to message ${step.tree}...`);
-        const status = await navigateToMessageAnchor(ctx, step.tree);
-        if (!notifyNavigationStatus(ctx, step.tree, status, "Workflow cancelled", "error")) return false;
-        continue;
-      }
-      if (step.onlyIfChanges) {
-        const changed = await checkForChanges(pi, ctx, round, rounds);
-        if (changed === null) return false;
-        if (!changed) continue;
-      }
-      if (step.cmd !== undefined) {
-        if (!(await runStoredCommand(pi, ctx, step.cmd, `Round ${round}/${rounds}: running `))) return false;
-      } else if (step.msg !== undefined) {
-        if (!(await sendStoredMessage(pi, ctx, step.msg, `Round ${round}/${rounds}: sending message ${step.msg}...`))) return false;
+  const sections = loopSections(config);
+  for (let s = 0; s < sections.length; s++) {
+    const section = sections[s]!;
+    const sectionLabel = sections.length > 1 ? `Section ${s + 1}, ` : "";
+    for (let round = 1; round <= rounds; round++) {
+      for (const step of section) {
+        if (workflowStopRequested) {
+          ctx.ui.notify("Workflow stopped", "info");
+          return false;
+        }
+        if (step.tree !== undefined) {
+          if (step.tree === "0") {
+            ctx.ui.setWorkingMessage(`${sectionLabel}Round ${round}/${rounds}: starting a new session...`);
+            const roots = ctx.sessionManager.getTree();
+            const root = roots[0];
+            if (root !== undefined) {
+              const result = await ctx.navigateTree(root.entry.id, { summarize: false });
+              if (result.cancelled) {
+                ctx.ui.notify("Workflow cancelled", "warning");
+                return false;
+              }
+            }
+            ctx.ui.notify("New session started", "info");
+            continue;
+          }
+          ctx.ui.setWorkingMessage(`${sectionLabel}Round ${round}/${rounds}: resetting context to message ${step.tree}...`);
+          const status = await navigateToMessageAnchor(ctx, step.tree);
+          if (!notifyNavigationStatus(ctx, step.tree, status, "Workflow cancelled", "error")) return false;
+          continue;
+        }
+        if (step.onlyIfChanges) {
+          const changed = await checkForChanges(pi, ctx, round, rounds, sectionLabel);
+          if (changed === null) return false;
+          if (!changed) continue;
+        }
+        if (step.workflow !== undefined) {
+          if (!(await runSubWorkflow(pi, ctx, step.workflow))) return false;
+        } else if (step.cmd !== undefined) {
+          if (!(await runStoredCommand(pi, ctx, step.cmd, `${sectionLabel}Round ${round}/${rounds}: running `))) return false;
+        } else if (step.msg !== undefined) {
+          if (!(await sendStoredMessage(pi, ctx, step.msg, `${sectionLabel}Round ${round}/${rounds}: sending message ${step.msg}...`))) return false;
+        } else if (step.commit === true) {
+          if (!(await runCommitStep(pi, ctx))) return false;
+        }
       }
     }
   }
   if (!(await runOncePhase(pi, ctx, config.finally, 0))) return false;
   return true;
+}
+
+async function runWorkflowPhases(
+  pi: ExtensionAPI,
+  ctx: ExtensionCommandContext,
+  config: WorkflowConfig,
+  index: string,
+  rounds: number,
+  messages: Record<string, string>,
+  leading: boolean,
+): Promise<boolean> {
+  const startMsgs = config.start.flatMap((step) => (step.msg !== undefined && messages[step.msg] !== undefined ? [messages[step.msg]!] : []));
+  const matched = leading
+    ? countLeadingPhaseMatches(ctx.sessionManager.getBranch(), startMsgs)
+    : countPhaseMatches(ctx.sessionManager.getBranch(), startMsgs);
+  const ok = await runPhases(pi, ctx, config, rounds, matched);
+  if (!ok && config.finallyOnError && !workflowStopRequested) {
+    await runOncePhase(pi, ctx, config.finally, 0);
+  }
+  return ok;
+}
+
+async function runSubWorkflow(pi: ExtensionAPI, ctx: ExtensionCommandContext, index: string): Promise<boolean> {
+  if (workflowStack.includes(index)) {
+    ctx.ui.notify(`Circular workflow reference: ${[...workflowStack, index].join(" → ")}`, "error");
+    return false;
+  }
+  const { config, exists } = getWorkflowConfig(index);
+  if (!exists) {
+    notifyMissingEntry(ctx, "Workflow", index, "Use /workflow-edit and press w to create it.", "error");
+    return false;
+  }
+  workflowStack.push(index);
+  try {
+    return await runWorkflowPhases(pi, ctx, config, index, config.rounds, getMessages(), false);
+  } finally {
+    workflowStack.pop();
+  }
 }
 
 export async function runWorkflow(
@@ -253,15 +330,12 @@ export async function runWorkflow(
 ): Promise<void> {
   workflowRunning = true;
   workflowStopRequested = false;
+  workflowStack.length = 0;
+  workflowStack.push(index);
   try {
     ctx.ui.setWorkingMessage("Waiting for queued messages to complete...");
     await ctx.waitForIdle();
-    const startMsgs = config.start.flatMap((step) => (step.msg !== undefined ? [messages[step.msg]!] : []));
-    const matched = countLeadingPhaseMatches(ctx.sessionManager.getBranch(), startMsgs);
-    const ok = await runPhases(pi, ctx, config, rounds, matched);
-    if (!ok && config.finallyOnError && !workflowStopRequested) {
-      await runOncePhase(pi, ctx, config.finally, 0);
-    }
+    const ok = await runWorkflowPhases(pi, ctx, config, index, rounds, messages, true);
     if (ok) ctx.ui.notify(`Workflow ${index} complete: ${rounds} round${rounds === 1 ? "" : "s"}`, "info");
   } finally {
     workflowRunning = false;

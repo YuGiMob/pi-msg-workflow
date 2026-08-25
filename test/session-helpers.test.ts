@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { userMessageText, countLeadingPhaseMatches, findAnchorAfterMessage, countUserTextMatches } from "../src/session-helpers.js";
+import { userMessageText, countLeadingPhaseMatches, countPhaseMatches, findAnchorAfterMessage, countUserTextMatches } from "../src/session-helpers.js";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 
 function userEntry(id: string, text: string): SessionEntry {
@@ -80,6 +80,32 @@ describe("countLeadingPhaseMatches", () => {
 
   it("returns zero for an empty session", () => {
     expect(countLeadingPhaseMatches([], ["a"])).toBe(0);
+  });
+});
+
+describe("countPhaseMatches", () => {
+  it("counts expected messages in order anywhere in the session", () => {
+    const entries = [userEntry("u1", "x"), assistantEntry("a1"), userEntry("u2", "a"), assistantEntry("a2"), userEntry("u3", "b")];
+    expect(countPhaseMatches(entries, ["a", "b"])).toBe(2);
+  });
+
+  it("skips non-user entries between matches", () => {
+    const entries = [userEntry("u1", "a"), toolEntry("t1"), assistantEntry("a1"), userEntry("u2", "b")];
+    expect(countPhaseMatches(entries, ["a", "b"])).toBe(2);
+  });
+
+  it("does not require the matches to be leading", () => {
+    const entries = [userEntry("u1", "other"), assistantEntry("a1"), userEntry("u2", "a"), assistantEntry("a2"), userEntry("u3", "b")];
+    expect(countPhaseMatches(entries, ["a", "b"])).toBe(2);
+  });
+
+  it("counts only matches in the expected order", () => {
+    const entries = [userEntry("u1", "a"), assistantEntry("a1"), userEntry("u2", "b")];
+    expect(countPhaseMatches(entries, ["b", "a"])).toBe(1);
+  });
+
+  it("returns zero for an empty session", () => {
+    expect(countPhaseMatches([], ["a"])).toBe(0);
   });
 });
 

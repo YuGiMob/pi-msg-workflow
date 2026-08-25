@@ -175,7 +175,7 @@ describe("WorkflowTab", () => {
     const tab = new WorkflowTab(theme as any);
     expect(tab.draft.tree).toBe("1");
     expect(tab.draft.loop).toEqual([{ msg: "6" }]);
-    expect(tab.getAboveContentLine(80)[0]).toContain("moved to the start of the loop");
+    expect(tab.getAboveContentLine(80)[0]).toContain("moved to the section start");
   });
 
   it("keeps additional tree steps when repairing a misplaced one", () => {
@@ -187,7 +187,7 @@ describe("WorkflowTab", () => {
     const tab = new WorkflowTab(theme as any);
     expect(tab.draft.tree).toBe("1");
     expect(tab.draft.loop).toEqual([{ msg: "6" }, { tree: "2" }]);
-    expect(tab.getAboveContentLine(80)[0]).toContain("moved to the start of the loop");
+    expect(tab.getAboveContentLine(80)[0]).toContain("moved to the section start");
   });
 
   it("renders embedded tree steps in the loop", () => {
@@ -241,7 +241,7 @@ describe("WorkflowTab", () => {
     expect((tab as any).index).toBe("2");
     expect(tab.draft.tree).toBe("1");
     expect(tab.draft.loop).toEqual([{ msg: "6" }]);
-    expect(popup).toHaveBeenCalledWith(expect.stringContaining("moved to the start of the loop"));
+    expect(popup).toHaveBeenCalledWith(expect.stringContaining("moved to the section start"));
   });
 
   it("keeps the current workflow when the target has no tree step", () => {
@@ -369,7 +369,7 @@ describe("WorkflowTab", () => {
     type(tab, "bogus");
     tab.handleInput("\r");
     expect(tab.draft.start).toHaveLength(5);
-    expect(tab.getAboveContentLine(80)[0]).toContain("Expected: msg <number> or cmd <number>");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Expected: msg <number>, cmd <number>, wf <number> or commit.");
   });
 
   it("edits a start cmd index", () => {
@@ -442,7 +442,7 @@ describe("WorkflowTab", () => {
     for (let i = 0; i < 11; i++) tab.handleInput("j");
     tab.handleInput("t");
     expect(tab.draft.finally[0]).toEqual({ msg: "8" });
-    expect(tab.getAboveContentLine(80)[0]).toContain("if-changes applies to loop msg and cmd steps");
+    expect(tab.getAboveContentLine(80)[0]).toContain("if-changes applies to loop msg, cmd and workflow steps");
   });
   it("refuses if-changes on a tree step embedded in the loop", () => {
     vi.mocked(readFileSync).mockImplementation((path: unknown) => {
@@ -480,14 +480,15 @@ describe("WorkflowTab", () => {
     type(tab, "bogus");
     tab.handleInput("\r");
     expect(tab.draft.loop).toHaveLength(5);
-    expect(tab.getAboveContentLine(80)[0]).toContain("Expected: msg <number> or cmd <number>");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Expected: msg <number>, cmd <number>, wf <number> or commit.");
   });
 
-  it("cannot add a step on the tree row", () => {
+  it("adds a step from the tree row of a section", () => {
     for (let i = 0; i < 5; i++) tab.handleInput("j");
     tab.handleInput("a");
-    expect(tab.getAboveContentLine(80)[0]).toContain("tree step is fixed");
-    expect(tab.draft.loop).toHaveLength(5);
+    type(tab, "msg 4");
+    tab.handleInput("\r");
+    expect(tab.draft.loop[tab.draft.loop.length - 1]).toEqual({ msg: "4" });
   });
 
   it("deletes a loop step", () => {
@@ -497,11 +498,11 @@ describe("WorkflowTab", () => {
     expect(tab.dirty).toBe(true);
   });
 
-  it("cannot delete the tree step", () => {
+  it("cannot delete the first loop section", () => {
     for (let i = 0; i < 5; i++) tab.handleInput("j");
     tab.handleInput("x");
     expect(tab.draft.tree).toBe("1");
-    expect(tab.getAboveContentLine(80)[0]).toContain("tree step is fixed");
+    expect(tab.getAboveContentLine(80)[0]).toContain("first loop section cannot be deleted");
   });
 
   it("moves a start row down", () => {
@@ -537,6 +538,299 @@ describe("WorkflowTab", () => {
     expect(tab.draft.loop[0]).toEqual({ cmd: "1", onlyIfChanges: true });
     tab.handleInput("t");
     expect(tab.draft.loop[0]).toEqual({ cmd: "1" });
+  });
+
+  it("adds a loop section with n", () => {
+    tab.handleInput("n");
+    expect((tab as any).draft.extraSections).toEqual([{ tree: "1", loop: [] }]);
+    expect(tab.dirty).toBe(true);
+  });
+
+  it("adds a step to a new loop section", () => {
+    tab.handleInput("n");
+    tab.handleInput("a");
+    type(tab, "msg 6");
+    tab.handleInput("\r");
+    expect((tab as any).draft.extraSections[0].loop).toEqual([{ msg: "6" }]);
+  });
+
+  it("edits the tree anchor of a second loop section", () => {
+    tab.handleInput("n");
+    tab.handleInput("e");
+    type(tab, "5");
+    tab.handleInput("\r");
+    expect((tab as any).draft.extraSections[0].tree).toBe("5");
+  });
+
+  it("toggles if-changes on a step in a second loop section", () => {
+    tab.handleInput("n");
+    tab.handleInput("a");
+    type(tab, "msg 6");
+    tab.handleInput("\r");
+    tab.handleInput("t");
+    expect((tab as any).draft.extraSections[0].loop[0]).toEqual({ msg: "6", onlyIfChanges: true });
+  });
+
+  it("moves a step in a second loop section", () => {
+    tab.handleInput("n");
+    tab.handleInput("a");
+    type(tab, "msg 6");
+    tab.handleInput("\r");
+    tab.handleInput("a");
+    type(tab, "msg 7");
+    tab.handleInput("\r");
+    tab.handleInput("K");
+    expect((tab as any).draft.extraSections[0].loop).toEqual([{ msg: "7" }, { msg: "6" }]);
+  });
+
+  it("deletes a second loop section from its tree row", () => {
+    tab.handleInput("n");
+    tab.handleInput("x");
+    expect((tab as any).draft.extraSections).toEqual([]);
+    expect(tab.dirty).toBe(true);
+  });
+
+  it("undoes an added loop section", () => {
+    tab.handleInput("n");
+    expect((tab as any).draft.extraSections).toHaveLength(1);
+    tab.handleInput("u");
+    expect((tab as any).draft.extraSections).toHaveLength(0);
+    expect(tab.dirty).toBe(false);
+  });
+
+  it("undoes a deleted loop section", () => {
+    tab.handleInput("n");
+    tab.handleInput("u");
+    tab.handleInput("n");
+    tab.handleInput("x");
+    expect((tab as any).draft.extraSections).toHaveLength(0);
+    tab.handleInput("u");
+    expect((tab as any).draft.extraSections).toHaveLength(1);
+  });
+
+  it("loads multiple loop sections into the draft", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 2, start: [], loop: [{ tree: "1" }, { msg: "6" }], loop2: [{ tree: "5" }, { msg: "10" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any);
+    expect(tab.draft.tree).toBe("1");
+    expect(tab.draft.loop).toEqual([{ msg: "6" }]);
+    expect((tab as any).draft.extraSections).toEqual([{ tree: "5", loop: [{ msg: "10" }] }]);
+  });
+
+  it("repairs a misplaced tree step in a second loop section", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 2, start: [], loop: [{ tree: "1" }], loop2: [{ msg: "10" }, { tree: "5" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any);
+    expect((tab as any).draft.extraSections).toEqual([{ tree: "5", loop: [{ msg: "10" }] }]);
+    expect(tab.getAboveContentLine(80)[0]).toContain("moved to the section start");
+  });
+
+  it("refuses to load a workflow whose second loop section has no tree step", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 2, start: [], loop: [{ tree: "1" }], loop2: [{ msg: "10" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any);
+    expect(tab.getAboveContentLine(80)[0]).toContain("no tree step in loop section 2");
+  });
+
+  it("renders multiple loop sections", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 2, start: [], loop: [{ tree: "1" }, { msg: "6" }], loop2: [{ tree: "5" }, { msg: "10" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any);
+    const lines = tab.render(78, 20).join("\n");
+    expect(lines).toContain(" loop 2");
+    expect(lines).toContain("tree → 5: take a look at the git status and git diff");
+  });
+
+  it("saves multiple loop sections to workflow.json", () => {
+    tab.handleInput("n");
+    tab.handleInput("a");
+    type(tab, "msg 6");
+    tab.handleInput("\r");
+    tab.save();
+    const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
+    expect(written["1"].loop2).toEqual([{ tree: "1" }, { msg: "6" }]);
+    expect(written["1"].loop[0]).toEqual({ tree: "1" });
+  });
+
+  it("adds a wf step", () => {
+    for (let i = 0; i < 6; i++) tab.handleInput("j");
+    tab.handleInput("a");
+    type(tab, "wf 2");
+    tab.handleInput("\r");
+    expect(tab.draft.loop[tab.draft.loop.length - 1]).toEqual({ workflow: "2" });
+  });
+
+  it("edits a wf step index", () => {
+    for (let i = 0; i < 6; i++) tab.handleInput("j");
+    tab.handleInput("a");
+    type(tab, "wf 2");
+    tab.handleInput("\r");
+    tab.handleInput("e");
+    type(tab, "3");
+    tab.handleInput("\r");
+    expect(tab.draft.loop[tab.draft.loop.length - 1]).toEqual({ workflow: "3" });
+  });
+
+  it("toggles if-changes on a wf step", () => {
+    for (let i = 0; i < 6; i++) tab.handleInput("j");
+    tab.handleInput("a");
+    type(tab, "wf 2");
+    tab.handleInput("\r");
+    tab.handleInput("t");
+    expect(tab.draft.loop[tab.draft.loop.length - 1]).toEqual({ workflow: "2", onlyIfChanges: true });
+    tab.handleInput("t");
+    expect(tab.draft.loop[tab.draft.loop.length - 1]).toEqual({ workflow: "2" });
+  });
+
+  it("rejects an invalid added wf step", () => {
+    for (let i = 0; i < 6; i++) tab.handleInput("j");
+    tab.handleInput("a");
+    type(tab, "workflow 2");
+    tab.handleInput("\r");
+    expect(tab.draft.loop).toHaveLength(5);
+    expect(tab.getAboveContentLine(80)[0]).toContain("Expected: msg <number>, cmd <number>, wf <number> or commit.");
+  });
+
+  it("renders contained workflow steps with a preview", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 2, start: [], loop: [{ tree: "1" }, { workflow: "2" }], finally: [] }, "2": WORKFLOW_JSON["2"] });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any);
+    const lines = tab.render(78, 12).join("\n");
+    expect(lines).toContain("wf 2: 2 rounds (5 start, 6 loop, 1 finally)");
+  });
+
+  it("marks a missing contained workflow as missing", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 2, start: [], loop: [{ tree: "1" }, { workflow: "99" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any);
+    const lines = tab.render(78, 12).join("\n");
+    expect(lines).toContain("wf 99: (missing)");
+  });
+
+  it("refuses to save when a referenced workflow is missing", () => {
+    for (let i = 0; i < 6; i++) tab.handleInput("j");
+    tab.handleInput("a");
+    type(tab, "wf 99");
+    tab.handleInput("\r");
+    tab.save();
+    expect(writeFileSync).not.toHaveBeenCalled();
+    expect(tab.getAboveContentLine(80)[0]).toContain("Missing workflows: 99. Create and save them first (press w to switch).");
+    expect(tab.dirty).toBe(true);
+  });
+
+  it("refuses to save when the save would create a circular workflow reference", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("defaults.json")) return JSON.stringify({ "workflow.json": "recorded", "messages.json": "recorded", "commands.json": "recorded" });
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 2, start: [], loop: [{ tree: "1" }, { workflow: "2" }], finally: [] }, "2": { rounds: 2, start: [], loop: [{ tree: "1" }, { workflow: "1" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any);
+    tab.save();
+    expect(writeFileSync).not.toHaveBeenCalled();
+    expect(tab.getAboveContentLine(80)[0]).toContain("Circular workflow reference: 1 → 2 → 1");
+  });
+
+  it("refuses to delete a workflow referenced by another workflow", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("defaults.json")) return JSON.stringify({ "workflow.json": "recorded", "messages.json": "recorded", "commands.json": "recorded" });
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 2, start: [], loop: [{ tree: "1" }, { workflow: "2" }], finally: [] }, "2": { rounds: 2, start: [], loop: [{ tree: "1" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any);
+    tab.handleInput("w");
+    type(tab, "2");
+    tab.handleInput("\r");
+    tab.handleInput("d");
+    expect((tab as any).index).toBe("2");
+    expect(writeFileSync).not.toHaveBeenCalled();
+    expect(tab.getAboveContentLine(80)[0]).toContain("Workflow 2 is used by workflow 1. Remove the reference first.");
+  });
+
+  it("adds a commit step", () => {
+    for (let i = 0; i < 6; i++) tab.handleInput("j");
+    tab.handleInput("a");
+    type(tab, "commit");
+    tab.handleInput("\r");
+    expect(tab.draft.loop[tab.draft.loop.length - 1]).toEqual({ commit: true });
+  });
+
+  it("adds a commit step to the finally phase", () => {
+    for (let i = 0; i < 11; i++) tab.handleInput("j");
+    tab.handleInput("a");
+    type(tab, "commit");
+    tab.handleInput("\r");
+    expect(tab.draft.finally[tab.draft.finally.length - 1]).toEqual({ commit: true });
+  });
+
+  it("renders commit steps", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 2, start: [], loop: [{ tree: "1" }, { commit: true }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any);
+    const lines = tab.render(78, 12).join("\n");
+    expect(lines).toContain("commit: stage and commit all changes");
+  });
+
+  it("refuses to edit a commit step index", () => {
+    for (let i = 0; i < 6; i++) tab.handleInput("j");
+    tab.handleInput("a");
+    type(tab, "commit");
+    tab.handleInput("\r");
+    tab.handleInput("e");
+    expect(tab.getAboveContentLine(80)[0]).toContain("Commit steps have no index to edit");
+  });
+
+  it("saves commit steps to workflow.json", () => {
+    for (let i = 0; i < 6; i++) tab.handleInput("j");
+    tab.handleInput("a");
+    type(tab, "commit");
+    tab.handleInput("\r");
+    tab.save();
+    const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
+    expect(written["1"].loop[written["1"].loop.length - 1]).toEqual({ commit: true });
+  });
+
+  it("renders tree 0 as a new session", () => {
+    vi.mocked(readFileSync).mockImplementation((path: unknown) => {
+      if (String(path).includes("workflow.json")) return JSON.stringify({ "1": { rounds: 2, start: [], loop: [{ tree: "0" }], finally: [] } });
+      if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
+      return JSON.stringify(MESSAGES);
+    });
+    const tab = new WorkflowTab(theme as any);
+    const lines = tab.render(78, 12).join("\n");
+    expect(lines).toContain("tree → 0: new session");
+  });
+
+  it("saves a tree 0 anchor", () => {
+    for (let i = 0; i < 5; i++) tab.handleInput("j");
+    tab.handleInput("e");
+    type(tab, "0");
+    tab.handleInput("\r");
+    tab.save();
+    const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
+    expect(written["1"].loop[0]).toEqual({ tree: "0" });
   });
 
   it("adjusts and clamps rounds", () => {

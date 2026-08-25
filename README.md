@@ -31,7 +31,7 @@ pi install npm:pi-msg-workflow
 /workflow
 ```
 
-The package ships with default messages (`1` to `15`), a default command (`1` = `git add .`), and two workflows.
+The package ships with default messages (`1` to `16`), a default command (`1` = `git add .`), and four workflows.
 
 ## Commands
 
@@ -101,36 +101,40 @@ Commands that take a number offer Tab autocomplete.
 }
 ```
 
-`/workflow` runs workflow 1, `/workflow 2` runs workflow 2, and `/workflow 2 3` runs workflow 2 with three review rounds. `dry` or `--dry-run` prints the resolved plan for the selected workflow. `list` prints all configured workflows with their rounds and step counts. A number that is not in `workflow.json` is rejected with `Workflow N does not exist.` Create it with `/workflow-edit` (press `w`).
+`/workflow` runs the default workflow 3, `/workflow 1` runs workflow 1, and `/workflow 2 3` runs workflow 2 with three review rounds. `dry` or `--dry-run` prints the resolved plan for the selected workflow. `list` prints all configured workflows with their rounds and step counts. A number that is not in `workflow.json` is rejected with `Workflow N does not exist.` Create it with `/workflow-edit` (press `w`).
 
-### The default workflow (1)
+### The default workflow (3)
 
+Workflow 3 is the default: each round starts with a `{ "tree": "0" }` step that starts a new session, runs workflow 4 (online research, adversarial review, implementation, and a commit), starts another new session, and then runs workflow 2 (deduplication, simplification, and bug reduction, which also commits) — so both workflows begin with a fresh read of the codebase.
 #### `rounds`
 
-Number of review-loop iterations (default `2`, max `5`). `/workflow <workflow> <n>` overrides it for a single run.
+Number of review-loop iterations (default `2`, max `5`). Each loop section repeats `rounds` times. `/workflow <workflow> <n>` overrides it for a single run.
 
 #### `start`
-
-Ordered steps run once before the loop. Each step is `{ "msg": "n" }` or `{ "cmd": "n" }`. msg steps whose text matches the leading user messages of the session are skipped, in order, so a re-run resumes the phase instead of repeating it. The skip stops at the first non-matching user message; cmd steps always re-run.
+Ordered steps run once before the loop. Each step is `{ "msg": "n" }`, `{ "cmd": "n" }`, or `{ "workflow": "n" }`. msg steps whose text matches the leading user messages of the session are skipped, in order, so a re-run resumes the phase instead of repeating it. The skip stops at the first non-matching user message; cmd and workflow steps always re-run.
 
 #### `loop`
 
-Ordered steps repeated each round. The first step must be a `tree` step; the context reset always happens at the beginning of the loop.
+Ordered steps repeated each round. `loop` is the first loop section; additional sections are `loop2`, `loop3`, and so on (up to 5 sections). Sections run sequentially, each repeating `rounds` times. The first step of every section must be a `tree` step; the context reset always happens at the beginning of each section.
 
 | Step | Meaning |
 | --- | --- |
 | `{ "tree": "1" }` | Reset the agent's context to the response of message 1 (same as `/tree-jump 1`). If the message text is not in the session (e.g. after a compaction), a warning is shown and the context falls back to the response of the first user message. |
+| `{ "tree": "0" }` | Start a new session (0 is never a message index): the context resets to the start of the session, so the previous rounds leave the context and the next start phase re-sends its messages (e.g. a fresh read of the codebase). The old rounds stay in the session tree as a branch. Commands and commit steps keep working. |
 | `{ "msg": "6" }` | Send message 6 and wait for the turn to finish. |
 | `{ "msg": "5", "onlyIfChanges": true }` | Send message 5 only when `git status --porcelain` shows changes. |
 | `{ "cmd": "1" }` | Perform command 1 from the command store. |
 | `{ "cmd": "1", "onlyIfChanges": true }` | Perform command 1 only when `git status --porcelain` shows changes. |
+| `{ "workflow": "2" }` | Run workflow 2 (its start phase, review rounds, and finally phase) and wait for it to finish. |
+| `{ "workflow": "2", "onlyIfChanges": true }` | Run workflow 2 only when `git status --porcelain` shows changes. |
+| `{ "commit": true }` | Stage all changes and commit them with a message derived from the changed files. |
 
-`onlyIfChanges` runs `git status --porcelain` in the project directory, so it requires the project to be a git repository. A msg or cmd step with `onlyIfChanges` is skipped when there are no changes.
-Message indices refer to the numbered message store: `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store: `/cmd 1`, `/change-cmd 1 "git add ."`, and `{ "cmd": "1" }` all address the same command. The default message store is numbered `1` to `15`: `1` to `8` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix, summarize), `9` to `15` serve workflow 2 (combined review, value check, implement, closer look, fix, validate, summarize).
+`onlyIfChanges` runs `git status --porcelain` in the project directory, so it requires the project to be a git repository. A msg, cmd, or workflow step with `onlyIfChanges` is skipped when there are no changes.
+Message indices refer to the numbered message store: `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store: `/cmd 1`, `/change-cmd 1 "git add ."`, and `{ "cmd": "1" }` all address the same command. The default message store is numbered `1` to `16`: `1` to `8` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix, summarize), `9` to `15` serve workflow 2 (combined review, value check, implement, closer look, fix, validate, summarize), and `16` serves workflow 4 (online research).
 
 #### `finally`
 
-Ordered steps run once after the loop finishes, unless a step fails and `finallyOnError` is not enabled. Each step is `{ "msg": "n" }` or `{ "cmd": "n" }`. The default config ends with a summary of all changes since the last commit.
+Ordered steps run once after the loop finishes, unless a step fails and `finallyOnError` is not enabled. Each step is `{ "msg": "n" }`, `{ "cmd": "n" }`, or `{ "workflow": "n" }`. Workflow 1's finally phase ends with a summary of all changes since the last commit; workflows 2 and 4 end with a commit step.
 
 #### `finallyOnError`
 
@@ -138,6 +142,12 @@ Optional boolean (default `false`). When enabled, the `finally` phase runs even 
 Command content is split on whitespace; single- and double-quoted arguments are supported (e.g. `git commit -m "fix"`), with `\"` and `\\` escapes inside double quotes. Unterminated quotes are rejected.
 
 Config values that fail validation produce a `[pi-msg-workflow]` warning and fall back to the defaults shown above.
+
+### Contained workflows
+
+A `{ "workflow": "n" }` step runs workflow `n` as a sub-workflow: its start phase, its loop sections, and its finally phase, with its own configured `rounds`. The sub-workflow's start phase skips messages that are already in the session, just like the top-level start phase. A failure inside the sub-workflow aborts the parent workflow; the sub-workflow's own `finallyOnError` decides whether its finally phase still runs, and the parent's `finallyOnError` decides whether the parent's finally phase runs. `/workflow-stop` cancels the whole chain after the current step.
+
+Workflows can contain each other to any depth, but circular references are rejected: the editor refuses to save a workflow that would create a cycle, and `/workflow` refuses to run a workflow whose graph contains a cycle. A workflow step that references a workflow that does not exist is rejected like a missing message or command.
 
 ### Workflow 2: deduplication, simplification, bug reduction
 
@@ -155,7 +165,15 @@ Workflow 2 is a focused review loop over duplicated logic, unnecessary complexit
 | `{ "cmd": "1", "onlyIfChanges": true }` | Stage the changes only when there are changes. |
 | `{ "msg": "15" }` | Summarize all of the changes since the last commit. |
 
-The tree step resets the context to the response of message 1, the shared read-the-codebase step of this workflow.
+The tree step resets the context to the response of message 1, the shared read-the-codebase step of this workflow. Its finally phase summarizes the changes and commits them via a `{ "commit": true }` step.
+
+### Workflow 3: explore, improve, commit, then review
+
+Workflow 3 runs two contained workflows per round: workflow 4 (online research, adversarial review, implementation, and a commit in its finally phase) followed by workflow 2 (deduplication, simplification, and bug reduction, which also commits in its finally phase). Each round starts with a `{ "tree": "0" }` step that starts a new session, and another `{ "tree": "0" }` step runs between the two workflows — so both workflow 4 and workflow 2 begin with a fresh read of the codebase (message 1 is sent again) and each commits its own changes.
+
+### Workflow 4: online research and adversarial review
+
+Workflow 4 is the exploration workflow contained in workflow 3. Its start phase reads the codebase, searches the web for similar projects with similar features, checks whether the proposed improvements are worth implementing, and implements them. Its loop is the same review loop as workflow 1 (closer look, fix, validate, stage), and its finally phase commits the changes via a `{ "commit": true }` step, which stages all changes and commits them with a message derived from the changed files.
 
 ## The editor
 
@@ -166,10 +184,10 @@ The tree step resets the context to the response of message 1, the shared read-t
 | `Tab` / `Shift+Tab` | switch between Workflow, Messages, and Commands tabs |
 | `j` / `k` | move selection |
 | `e` | edit the selected row (tree anchor, step index, command index, message/command content) |
-| `a` | add a row (`msg <n>` / `cmd <n>` start, loop, or finally step; new message/command) |
-| `x` | delete the selected row |
-| `J` / `K` | move the selected step up/down (tree step stays first) |
-| `t` | toggle `onlyIfChanges` on a msg or cmd loop step |
+| `a` | add a row (`msg <n>` / `cmd <n>` / `wf <n>` / `commit` start, loop, or finally step; new message/command) |
+| `x` | delete the selected row (on a loop section's tree row: delete that section) |
+| `n` | add a new loop section (up to 5) |
+| `t` | toggle `onlyIfChanges` on a msg, cmd, or workflow loop step |
 | `[` / `]` | decrease / increase rounds |
 | `f` | toggle `finallyOnError` (run the finally phase even when a step fails) |
 | `u` | undo the last change to the active tab |
@@ -180,7 +198,7 @@ The tree step resets the context to the response of message 1, the shared read-t
 
 While editing content, `←` / `→` move the cursor, `Home` / `End` jump to the start / end, `Delete` removes the character under the cursor, and `Backspace` removes the character before it. Input longer than the window wraps onto additional lines, so the full content stays visible while you type or paste.
 
-The Workflow tab edits one workflow at a time. `w` switches to another workflow number; switching to a number that does not exist yet starts a new workflow which is created when you press `s`. `d` deletes the current workflow after typing `y` to confirm. The tab bar shows the number of the workflow being edited (e.g. `[Workflow 2]`). Saving the Workflow tab refuses indices that reference missing messages or commands, so add and save those in the Messages/Commands tabs first. Saving the Messages and Commands tabs refuses to delete entries still referenced by any workflow, so drop and save those references in the Workflow tab first. Entries referenced by any workflow are marked with `*N` (the workflow number) in the Messages and Commands tabs. The tree step is fixed as the first loop step; only its anchor index is editable.
+The Workflow tab edits one workflow at a time. `w` switches to another workflow number; switching to a number that does not exist yet starts a new workflow which is created when you press `s`. `d` deletes the current workflow after typing `y` to confirm; a workflow still referenced by another workflow cannot be deleted. The tab bar shows the number of the workflow being edited (e.g. `[Workflow 2]`). Saving the Workflow tab refuses indices that reference missing messages, commands, or workflows, so add and save those in the Messages/Commands tabs first (create missing workflows with `w`). Saving is also refused when the save would create a circular workflow reference; break the cycle in the referenced workflow first. Saving the Messages and Commands tabs refuses to delete entries still referenced by any workflow, so drop and save those references in the Workflow tab first. Entries referenced by any workflow are marked with `*N` (the workflow number) in the Messages and Commands tabs. Each loop section's tree step is fixed as the first step of that section; only its anchor index is editable.
 
 While the editor is open, console diagnostics from the extension (for example failed reads or syncs of the config files) are shown as a temporary popup above the editor instead of being lost behind it. The popup dismisses on any key or after a few seconds; further messages queue up until it closes. When you start entering content (`e`, `a`, `w`, `d`), a popup with the input field appears in the center of the screen; `Enter` confirms and `Esc` cancels, and long input wraps onto additional lines inside the popup so everything stays visible. Successful edits (add, edit, delete, move, if-changes toggle, rounds, undo, save, workflow switch) are acknowledged with a confirmation popup, which does not capture keyboard focus so you can keep typing.
 
@@ -202,7 +220,8 @@ Each user copy is tracked against the checksum of the packaged default it was sy
 - `"Message N does not exist."` Create it with `/change-msg N "content"`, in the editor's Messages tab, or run `/workflow-reset` to restore the default stores.
 - `"Workflow N does not exist."` The number is not in `workflow.json`. `/workflow` runs the default workflow 1; create other workflows in the editor with `w` or add them to `workflow.json` directly.
 - The workflow refuses to start. Another workflow is running; use `/workflow-stop` to cancel it after the current step.
-- The editor refuses to save. The Workflow tab references messages or commands that don't exist yet: add and save them in the Messages/Commands tabs first. The Messages/Commands tabs refuse to delete a message or command still referenced by the workflow: drop those references in the Workflow tab first.
+- The editor refuses to save. The Workflow tab references messages, commands, or workflows that don't exist yet: add and save them in the Messages/Commands tabs first (create missing workflows with `w`). The save would create a circular workflow reference: break the cycle in the referenced workflow first. The Messages/Commands tabs refuse to delete a message or command still referenced by the workflow: drop those references in the Workflow tab first.
+- `"Circular workflow reference: 1 → 2 → 1."` A workflow contains itself, directly or indirectly. Break the cycle in the referenced workflow first, then save or run again.
 - `onlyIfChanges` never fires. The project is not a git repository, or `git status --porcelain` reports no changes.
 - My config changes are ignored. The files live in `~/.config/pi-msg-workflow/`, not inside the installed package. If you edited the packaged copies, back them up and let the user copies sync.
 - I want the default workflows back. `/workflow-reset` restores `workflow.json`, `messages.json`, and `commands.json` to the packaged defaults.

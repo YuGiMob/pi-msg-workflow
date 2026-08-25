@@ -37,7 +37,39 @@
       { "cmd": "1", "onlyIfChanges": true }
     ],
     "finally": [
-      { "msg": "15" }
+      { "msg": "15" },
+      { "commit": true }
+    ]
+  },
+  "3": {
+    "rounds": 2,
+    "start": [],
+    "loop": [
+      { "tree": "0" },
+      { "workflow": "4" },
+      { "tree": "0" },
+      { "workflow": "2" }
+    ],
+    "finally": []
+  },
+  "4": {
+    "rounds": 2,
+    "start": [
+      { "msg": "1" },
+      { "msg": "16" },
+      { "msg": "3" },
+      { "msg": "4" }
+    ],
+    "loop": [
+      { "tree": "1" },
+      { "cmd": "1" },
+      { "msg": "6" },
+      { "msg": "7" },
+      { "msg": "5", "onlyIfChanges": true },
+      { "cmd": "1", "onlyIfChanges": true }
+    ],
+    "finally": [
+      { "commit": true }
     ]
   }
 }
