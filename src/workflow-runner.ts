@@ -14,6 +14,20 @@ const SEND_POLL_INTERVAL_MS = 25;
 let workflowStopRequested = false;
 let workflowRunning = false;
 const workflowStack: string[] = [];
+const workflowLabels: string[] = [];
+
+function workflowChain(): string {
+  return workflowLabels.join(" → ");
+}
+
+function withWorkflowChain(text: string): string {
+  return workflowLabels.length > 1 ? `${workflowChain()}: ${text}` : text;
+}
+
+function loopLabel(index: string, sectionCount: number, section: number, round: number, rounds: number): string {
+  const sectionPart = sectionCount > 1 ? `, section ${section + 1}` : "";
+  return `Workflow ${index}${sectionPart}, round ${round}/${rounds}`;
+}
 
 export function isWorkflowRunning(): boolean {
   return workflowRunning;
@@ -123,8 +137,8 @@ export function notifyNavigationStatus(
   return true;
 }
 
-async function checkForChanges(pi: ExtensionAPI, ctx: ExtensionCommandContext, round: number, rounds: number, sectionLabel: string): Promise<boolean | null> {
-  ctx.ui.setWorkingMessage(`${sectionLabel}Round ${round}/${rounds}: checking for changes...`);
+async function checkForChanges(pi: ExtensionAPI, ctx: ExtensionCommandContext, scope: string): Promise<boolean | null> {
+  ctx.ui.setWorkingMessage(withWorkflowChain(`${scope}checking for changes...`));
   let statusResult: ExecResult;
   try {
     statusResult = await pi.exec("git", ["status", "--porcelain"]);
@@ -137,7 +151,7 @@ async function checkForChanges(pi: ExtensionAPI, ctx: ExtensionCommandContext, r
     return null;
   }
   const changed = statusResult.stdout.trim().length > 0;
-  if (!changed) ctx.ui.notify(`${sectionLabel}Round ${round}/${rounds}: no changes detected, skipping step`, "info");
+  if (!changed) ctx.ui.notify(withWorkflowChain(`${scope}no changes detected, skipping step`), "info");
   return changed;
 }
 
@@ -161,7 +175,7 @@ async function runStoredCommand(
 }
 
 async function runCommitStep(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<boolean> {
-  const result = await runCommit(pi, ctx.ui, lastAssistantMessageText(ctx.sessionManager.getBranch()));
+  const result = await runCommit(pi, ctx.ui, lastAssistantMessageText(ctx.sessionManager.getBranch()), withWorkflowChain("Committing changes..."));
   if (!result.ok) {
     ctx.ui.notify(commitFailureMessage(result), "error");
     return false;
@@ -211,9 +225,9 @@ async function runOncePhase(
         skipped++;
         continue;
       }
-      if (!(await sendStoredMessage(pi, ctx, step.msg, `Sending message ${step.msg}...`))) return false;
+      if (!(await sendStoredMessage(pi, ctx, step.msg, withWorkflowChain(`Sending message ${step.msg}...`)))) return false;
     } else if (step.cmd !== undefined) {
-      if (!(await runStoredCommand(pi, ctx, step.cmd, "Running "))) return false;
+      if (!(await runStoredCommand(pi, ctx, step.cmd, withWorkflowChain("Running ")))) return false;
     } else if (step.workflow !== undefined) {
       if (!(await runSubWorkflow(pi, ctx, step.workflow))) return false;
     } else if (step.commit === true) {
@@ -227,6 +241,7 @@ async function runPhases(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
   config: WorkflowConfig,
+  index: string,
   rounds: number,
   matched: number,
 ): Promise<boolean> {
@@ -236,6 +251,8 @@ async function runPhases(
     const section = sections[s]!;
     const sectionLabel = sections.length > 1 ? `Section ${s + 1}, ` : "";
     for (let round = 1; round <= rounds; round++) {
+      workflowLabels[workflowLabels.length - 1] = loopLabel(index, sections.length, s, round, rounds);
+      const scope = workflowLabels.length > 1 ? "" : `${sectionLabel}Round ${round}/${rounds}: `;
       for (const step of section) {
         if (workflowStopRequested) {
           ctx.ui.notify("Workflow stopped", "info");
@@ -243,7 +260,7 @@ async function runPhases(
         }
         if (step.tree !== undefined) {
           if (step.tree === "0") {
-            ctx.ui.setWorkingMessage(`${sectionLabel}Round ${round}/${rounds}: starting a new session...`);
+            ctx.ui.setWorkingMessage(withWorkflowChain(`${scope}starting a new session...`));
             const roots = ctx.sessionManager.getTree();
             const root = roots[0];
             if (root !== undefined) {
@@ -256,28 +273,29 @@ async function runPhases(
             ctx.ui.notify("New session started", "info");
             continue;
           }
-          ctx.ui.setWorkingMessage(`${sectionLabel}Round ${round}/${rounds}: resetting context to message ${step.tree}...`);
+          ctx.ui.setWorkingMessage(withWorkflowChain(`${scope}resetting context to message ${step.tree}...`));
           const status = await navigateToMessageAnchor(ctx, step.tree);
           if (!notifyNavigationStatus(ctx, step.tree, status, "Workflow cancelled", "error")) return false;
           continue;
         }
         if (step.onlyIfChanges) {
-          const changed = await checkForChanges(pi, ctx, round, rounds, sectionLabel);
+          const changed = await checkForChanges(pi, ctx, scope);
           if (changed === null) return false;
           if (!changed) continue;
         }
         if (step.workflow !== undefined) {
           if (!(await runSubWorkflow(pi, ctx, step.workflow))) return false;
         } else if (step.cmd !== undefined) {
-          if (!(await runStoredCommand(pi, ctx, step.cmd, `${sectionLabel}Round ${round}/${rounds}: running `))) return false;
+          if (!(await runStoredCommand(pi, ctx, step.cmd, withWorkflowChain(`${scope}running `)))) return false;
         } else if (step.msg !== undefined) {
-          if (!(await sendStoredMessage(pi, ctx, step.msg, `${sectionLabel}Round ${round}/${rounds}: sending message ${step.msg}...`))) return false;
+          if (!(await sendStoredMessage(pi, ctx, step.msg, withWorkflowChain(`${scope}sending message ${step.msg}...`)))) return false;
         } else if (step.commit === true) {
           if (!(await runCommitStep(pi, ctx))) return false;
         }
       }
     }
   }
+  workflowLabels[workflowLabels.length - 1] = `Workflow ${index}`;
   if (!(await runOncePhase(pi, ctx, config.finally, 0))) return false;
   return true;
 }
@@ -295,7 +313,7 @@ async function runWorkflowPhases(
   const matched = leading
     ? countLeadingPhaseMatches(ctx.sessionManager.getBranch(), startMsgs)
     : countPhaseMatches(ctx.sessionManager.getBranch(), startMsgs);
-  const ok = await runPhases(pi, ctx, config, rounds, matched);
+  const ok = await runPhases(pi, ctx, config, index, rounds, matched);
   if (!ok && config.finallyOnError && !workflowStopRequested) {
     await runOncePhase(pi, ctx, config.finally, 0);
   }
@@ -313,10 +331,12 @@ async function runSubWorkflow(pi: ExtensionAPI, ctx: ExtensionCommandContext, in
     return false;
   }
   workflowStack.push(index);
+  workflowLabels.push(`Workflow ${index}`);
   try {
     return await runWorkflowPhases(pi, ctx, config, index, config.rounds, getMessages(), false);
   } finally {
     workflowStack.pop();
+    workflowLabels.pop();
   }
 }
 
@@ -332,6 +352,8 @@ export async function runWorkflow(
   workflowStopRequested = false;
   workflowStack.length = 0;
   workflowStack.push(index);
+  workflowLabels.length = 0;
+  workflowLabels.push(`Workflow ${index}`);
   try {
     ctx.ui.setWorkingMessage("Waiting for queued messages to complete...");
     await ctx.waitForIdle();

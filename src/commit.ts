@@ -19,8 +19,8 @@ function commitMessage(nameOnlyOutput: string): string {
   return `Update ${shown.join(", ")}${suffix}`;
 }
 
-export async function runCommit(pi: ExtensionAPI, ui: { setWorkingMessage(message?: string): void }, message?: string): Promise<CommitResult> {
-  ui.setWorkingMessage("Committing changes...");
+export async function runCommit(pi: ExtensionAPI, ui: { setWorkingMessage(message?: string): void }, message?: string, workingText = "Committing changes..."): Promise<CommitResult> {
+  ui.setWorkingMessage(workingText);
   try {
     const status = await pi.exec("git", ["status", "--porcelain"]);
     if (status.code !== 0) return { ok: false, reason: "failed", stderr: status.stderr, stdout: status.stdout };

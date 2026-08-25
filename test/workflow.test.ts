@@ -1142,6 +1142,60 @@ describe("workflow extension", () => {
     expect(ctx.ui.notify).not.toHaveBeenCalledWith("Workflow 2 complete: 2 rounds", "info");
   });
 
+  it("shows the workflow chain with round numbers while a contained workflow runs", async () => {
+    holder.workflow = {
+      "1": { rounds: 1, start: [], loop: [{ tree: "1" }, { workflow: "2" }], finally: [{ msg: "8" }] },
+      "2": { rounds: 2, start: [{ msg: "9" }], loop: [{ tree: "9" }, { msg: "10" }], finally: [{ commit: true }] },
+    };
+    pi.exec = vi.fn(async (cmd: string, args: string[]) => {
+      if (cmd === "git" && args[0] === "status") return { code: 0, stdout: " M x\n", stderr: "" };
+      if (cmd === "git" && args[0] === "add") return { code: 0, stdout: "", stderr: "" };
+      if (cmd === "git" && args[0] === "diff") return { code: 0, stdout: "x\n", stderr: "" };
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    const ctx = createCtx(fullPhaseA());
+    await commands["workflow"].handler("1", ctx);
+    const working = ctx.ui.setWorkingMessage.mock.calls.map((c: any[]) => c[0]);
+    expect(working).toContain("Workflow 1, round 1/1 → Workflow 2: Sending message 9...");
+    expect(working).toContain("Workflow 1, round 1/1 → Workflow 2, round 1/2: resetting context to message 9...");
+    expect(working).toContain("Workflow 1, round 1/1 → Workflow 2, round 1/2: sending message 10...");
+    expect(working).toContain("Workflow 1, round 1/1 → Workflow 2, round 2/2: sending message 10...");
+    expect(working).toContain("Workflow 1, round 1/1 → Workflow 2: Committing changes...");
+    expect(working).toContain("Sending message 8...");
+  });
+
+  it("shows the full chain for a workflow nested two levels deep", async () => {
+    holder.workflow = {
+      "1": { rounds: 1, start: [], loop: [{ tree: "1" }, { workflow: "2" }], finally: [] },
+      "2": { rounds: 1, start: [], loop: [{ tree: "1" }, { workflow: "4" }], finally: [] },
+      "4": { rounds: 1, start: [{ msg: "16" }], loop: [{ tree: "1" }], finally: [] },
+    };
+    const ctx = createCtx(fullPhaseA());
+    await commands["workflow"].handler("1", ctx);
+    const working = ctx.ui.setWorkingMessage.mock.calls.map((c: any[]) => c[0]);
+    expect(working).toContain("Workflow 1, round 1/1 → Workflow 2, round 1/1 → Workflow 4: Sending message 16...");
+  });
+
+  it("shows the section in the chain of a contained workflow with multiple loop sections", async () => {
+    holder.workflow = {
+      "1": { rounds: 1, start: [], loop: [{ tree: "1" }, { workflow: "2" }], finally: [] },
+      "2": { rounds: 1, start: [], loop: [{ tree: "1" }, { msg: "6" }], loop2: [{ tree: "5" }, { msg: "10" }], finally: [] },
+    };
+    const ctx = createCtx(fullPhaseA());
+    await commands["workflow"].handler("1", ctx);
+    const working = ctx.ui.setWorkingMessage.mock.calls.map((c: any[]) => c[0]);
+    expect(working).toContain("Workflow 1, round 1/1 → Workflow 2, section 2, round 1/1: sending message 10...");
+  });
+
+  it("keeps the plain round text for a standalone workflow", async () => {
+    const ctx = createCtx(fullPhaseA());
+    await commands["workflow"].handler("1", ctx);
+    const working = ctx.ui.setWorkingMessage.mock.calls.map((c: any[]) => c[0]);
+    expect(working).toContain("Round 1/2: sending message 6...");
+    expect(working).toContain("Round 2/2: sending message 6...");
+    expect(working).not.toContain("→");
+  });
+
   it("runs a contained workflow from a start step", async () => {
     holder.workflow = {
       "1": { rounds: 1, start: [{ msg: "1" }, { workflow: "2" }], loop: [{ tree: "1" }], finally: [] },
