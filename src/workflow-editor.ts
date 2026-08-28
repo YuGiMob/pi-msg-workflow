@@ -791,12 +791,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       this.popup("Timeout updated. Press s to save.");
     });
   }
-
-  save(): void {
-    if (this.loadFailedIndex !== null) {
-      this.setFlash(`Workflow ${this.loadFailedIndex} has no tree step. Fix workflow.json first.`);
-      return;
-    }
+  private buildConfig(): WorkflowConfig {
     const config: WorkflowConfig = {
       rounds: this.draft.rounds,
       start: [...this.draft.start],
@@ -808,27 +803,41 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       const section = this.draft.extraSections[i]!;
       (config as unknown as Record<string, unknown>)[`loop${i + 2}`] = [{ tree: section.tree, ...(section.treeTimeout !== undefined ? { timeout: section.treeTimeout } : {}) }, ...section.loop.map((step) => ({ ...step }))];
     }
+    return config;
+  }
+  private lintWarningFor(config: WorkflowConfig): string | null {
     const { workflows } = getWorkflows();
     const nextWorkflows = { ...workflows, [this.index]: config };
     const issues = getWorkflowIssues(config, getMessages(), getCommands(), nextWorkflows, this.index);
-    if (issues.missingMessages.length > 0) {
-      this.setFlash(`Missing messages: ${issues.missingMessages.join(", ")}. Add and save them in the Messages tab first.`);
+    if (issues.missingMessages.length > 0) return `Missing messages: ${issues.missingMessages.join(", ")}. Add and save them in the Messages tab first.`;
+    if (issues.missingCommands.length > 0) return `Missing commands: ${issues.missingCommands.join(", ")}. Add and save them in the Commands tab first.`;
+    if (issues.missingWorkflows.length > 0) return `Missing workflows: ${issues.missingWorkflows.join(", ")}. Create and save them first (press w to switch).`;
+    if (issues.cycle !== null) return `Circular workflow reference: ${issues.cycle.join(" → ")}. Break the cycle in the referenced workflow first.`;
+    if (issues.hasBadSection) return `The first step of every loop section must be a tree step (context reset)`;
+    return null;
+  }
+  private lintWarning(): string | null {
+    if (this.loadFailedIndex !== null) return `Workflow ${this.loadFailedIndex} has no tree step. Fix workflow.json first.`;
+    return this.lintWarningFor(this.buildConfig());
+  }
+  override getAboveContentLine(innerWidth: number): string[] {
+    const lines = super.getAboveContentLine(innerWidth);
+    const warning = this.lintWarning();
+    if (warning !== null && warning !== this.flash) {
+      const text = truncate(` ${warning}`, innerWidth);
+      lines.push(this.theme.fg("warning", text));
+    }
+    return lines;
+  }
+  save(): void {
+    if (this.loadFailedIndex !== null) {
+      this.setFlash(`Workflow ${this.loadFailedIndex} has no tree step. Fix workflow.json first.`);
       return;
     }
-    if (issues.missingCommands.length > 0) {
-      this.setFlash(`Missing commands: ${issues.missingCommands.join(", ")}. Add and save them in the Commands tab first.`);
-      return;
-    }
-    if (issues.missingWorkflows.length > 0) {
-      this.setFlash(`Missing workflows: ${issues.missingWorkflows.join(", ")}. Create and save them first (press w to switch).`);
-      return;
-    }
-    if (issues.cycle !== null) {
-      this.setFlash(`Circular workflow reference: ${issues.cycle.join(" → ")}. Break the cycle in the referenced workflow first.`);
-      return;
-    }
-    if (issues.hasBadSection) {
-      this.setFlash(`The first step of every loop section must be a tree step (context reset)`);
+    const config = this.buildConfig();
+    const warning = this.lintWarningFor(config);
+    if (warning !== null) {
+      this.setFlash(warning);
       return;
     }
     try {
