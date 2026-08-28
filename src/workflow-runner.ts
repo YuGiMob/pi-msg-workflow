@@ -131,7 +131,17 @@ async function notifyRetry(ctx: ExtensionCommandContext, scope: string, message:
 }
 async function retryWithTimeout<T>(ctx: ExtensionCommandContext, scope: string, retries: number, timeout: number | undefined, task: () => Promise<T>, isSuccess: (result: T) => boolean, isRetryable: (result: T | null) => boolean, retryMessage: (result: T | null, attempt: number, retries: number) => string): Promise<T | null> {
   for (let attempt = 1; attempt <= retries; attempt++) {
-    const result = await withStepTimeout(task(), timeout, ctx, scope) as T | null;
+    let result: T | null;
+    try {
+      result = await withStepTimeout(task(), timeout, ctx, scope) as T | null;
+    } catch (err) {
+      ctx.ui.notify(withWorkflowChain(`${scope}${errorMessage(err)}`), "error");
+      if (isRetryable(null) && attempt < retries && !workflowStopRequested) {
+        if (!(await notifyRetry(ctx, scope, retryMessage(null, attempt, retries), attempt))) return null;
+        continue;
+      }
+      return null;
+    }
     if (result === null) {
       if (isRetryable(null) && attempt < retries && !workflowStopRequested) {
         if (!(await notifyRetry(ctx, scope, retryMessage(null, attempt, retries), attempt))) return null;
@@ -284,8 +294,19 @@ async function runTreeStep(ctx: ExtensionCommandContext, scope: string, tree: st
       const roots = ctx.sessionManager.getTree();
       const root = roots[0];
       if (root !== undefined) {
-        const navigateTask = ctx.navigateTree(root.entry.id, { summarize: false });
-        const result = await withStepTimeout(navigateTask, timeout, ctx, scope);
+        let result: { cancelled: boolean } | null;
+        try {
+          const navigateTask = ctx.navigateTree(root.entry.id, { summarize: false });
+          result = await withStepTimeout(navigateTask, timeout, ctx, scope);
+        } catch (err) {
+          ctx.ui.setWorkingMessage();
+          ctx.ui.notify(`Could not navigate: ${errorMessage(err)}`, "error");
+          if (attempt < retries && !workflowStopRequested) {
+            if (!(await notifyRetry(ctx, scope, `retrying new session after error (${attempt}/${retries})`, attempt))) return false;
+            continue;
+          }
+          return false;
+        }
         if (result === null) {
           ctx.ui.setWorkingMessage();
           if (attempt < retries && !workflowStopRequested) {

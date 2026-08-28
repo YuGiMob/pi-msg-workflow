@@ -103,7 +103,7 @@ function isStepForAllowedActions(value: unknown, allowed: string[], checkOnlyIfC
   if (entry === null) return false;
   if ("timeout" in entry.step && !isValidTimeout(entry.step.timeout)) return false;
   if ("retries" in entry.step && !isValidRetries(entry.step.retries)) return false;
-  if (entry.action === "commit") return entry.content === true && (!checkOnlyIfChanges || !("onlyIfChanges" in entry.step));
+  if (entry.action === "commit") return entry.content === true && !("onlyIfChanges" in entry.step);
   if (!allowed.includes(entry.action)) return false;
   if (!isNumericString(entry.content)) return false;
   if (checkOnlyIfChanges) {

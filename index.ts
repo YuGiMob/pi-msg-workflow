@@ -314,7 +314,8 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       const dryRun = tokens.some((token) => token === "dry" || token === "--dry-run");
-      const extracted = extractWorkflowVars(args);
+      const argsWithoutFlags = args.replace(/\b(?:dry|--dry-run)\b/g, " ").replace(/\s+/g, " ").trim();
+      const extracted = extractWorkflowVars(argsWithoutFlags);
       const vars = extracted.vars;
       if (extracted.warning !== undefined) ctx.ui.notify(extracted.warning, "warning");
       if (!dryRun && isWorkflowRunning()) {
