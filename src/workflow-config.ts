@@ -11,6 +11,7 @@ export interface LoopStep {
   commit?: boolean;
   onlyIfChanges?: boolean;
   timeout?: number;
+  retries?: number;
 }
 
 export interface StartStep {
@@ -19,6 +20,7 @@ export interface StartStep {
   workflow?: string;
   commit?: boolean;
   timeout?: number;
+  retries?: number;
 }
 
 export interface WorkflowConfig {
@@ -31,6 +33,7 @@ export interface WorkflowConfig {
   loop5?: LoopStep[];
   finally: StartStep[];
   finallyOnError?: boolean;
+  stopAfterEmpty?: number;
 }
 
 const WORKFLOW_PATH = userDataPath(WORKFLOW_FILE);
@@ -69,7 +72,7 @@ function defaultConfig(): WorkflowConfig {
 function stepAction(value: unknown): { action: string; content: unknown; step: Record<string, unknown> } | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const step = value as Record<string, unknown>;
-  const keys = Object.keys(step).filter((key) => key !== "onlyIfChanges" && key !== "timeout");
+  const keys = Object.keys(step).filter((key) => key !== "onlyIfChanges" && key !== "timeout" && key !== "retries");
   if (keys.length !== 1) return null;
   const action = keys[0]!;
   return { action, content: step[action], step };
@@ -83,10 +86,19 @@ export function isValidTimeout(value: unknown): boolean {
   return typeof value === "number" && Number.isInteger(value) && value >= 1000 && value <= 600000;
 }
 
+export function isValidRetries(value: unknown): boolean {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 3;
+}
+
+export function isValidStopAfterEmpty(value: unknown): boolean {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= MAX_ROUNDS;
+}
+
 function isStepForAllowedActions(value: unknown, allowed: string[], checkOnlyIfChanges: boolean): boolean {
   const entry = stepAction(value);
   if (entry === null) return false;
   if ("timeout" in entry.step && !isValidTimeout(entry.step.timeout)) return false;
+  if ("retries" in entry.step && !isValidRetries(entry.step.retries)) return false;
   if (entry.action === "commit") return entry.content === true && (!checkOnlyIfChanges || !("onlyIfChanges" in entry.step));
   if (!allowed.includes(entry.action)) return false;
   if (!isNumericString(entry.content)) return false;
@@ -159,6 +171,19 @@ function parseConfig(input: Record<string, unknown>, errors: string[], label: st
     }
   }
 
+  let stopAfterEmpty: number | undefined;
+  if (input.stopAfterEmpty !== undefined) {
+    if (isValidStopAfterEmpty(input.stopAfterEmpty)) {
+      stopAfterEmpty = input.stopAfterEmpty as number;
+    } else {
+      errors.push(`${tag}Invalid stopAfterEmpty "${String(input.stopAfterEmpty)}". Must be 1-${MAX_ROUNDS}. Ignored.`);
+    }
+  }
+  if (stopAfterEmpty !== undefined && stopAfterEmpty > rounds) {
+    errors.push(`${tag}Invalid stopAfterEmpty "${String(stopAfterEmpty)}": Must be <= rounds (${rounds}). Ignored.`);
+    stopAfterEmpty = undefined;
+  }
+
   const start = parseStartSteps(input, errors, tag, "start", DEFAULT_START);
   const finallySteps = parseStartSteps(input, errors, tag, "finally", DEFAULT_FINALLY);
 
@@ -174,7 +199,7 @@ function parseConfig(input: Record<string, unknown>, errors: string[], label: st
     }
   }
 
-  const config: WorkflowConfig = { rounds, start, loop, finally: finallySteps, finallyOnError };
+  const config: WorkflowConfig = { rounds, start, loop, finally: finallySteps, finallyOnError, ...(stopAfterEmpty !== undefined ? { stopAfterEmpty } : {}) };
   if (loop2.length > 0) config.loop2 = loop2;
   if (loop3.length > 0) config.loop3 = loop3;
   if (loop4.length > 0) config.loop4 = loop4;

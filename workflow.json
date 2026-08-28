@@ -1,6 +1,7 @@
 {
   "1": {
     "rounds": 2,
+    "stopAfterEmpty": 1,
     "start": [
       { "msg": "1" },
       { "msg": "2" },
@@ -9,20 +10,21 @@
       { "msg": "5" }
     ],
     "loop": [
-      { "tree": "1" },
-      { "cmd": "1" },
-      { "msg": "6" },
-      { "msg": "7" },
-      { "msg": "5", "onlyIfChanges": true },
-      { "cmd": "1", "onlyIfChanges": true }
+      { "tree": "1", "retries": 2 },
+      { "cmd": "1", "retries": 2 },
+      { "msg": "6", "retries": 2 },
+      { "msg": "7", "retries": 2 },
+      { "msg": "5", "onlyIfChanges": true, "retries": 2 },
+      { "cmd": "1", "onlyIfChanges": true, "retries": 2 }
     ],
     "finally": [
-      { "msg": "17" },
-      { "commit": true }
+      { "msg": "17", "retries": 2 },
+      { "commit": true, "retries": 2 }
     ]
   },
   "2": {
     "rounds": 2,
+    "stopAfterEmpty": 1,
     "start": [
       { "msg": "1" },
       { "msg": "9" },
@@ -30,31 +32,32 @@
       { "msg": "11" }
     ],
     "loop": [
-      { "tree": "1" },
-      { "cmd": "1" },
-      { "msg": "12" },
-      { "msg": "13" },
-      { "msg": "14", "onlyIfChanges": true },
-      { "cmd": "1", "onlyIfChanges": true }
+      { "tree": "1", "retries": 2 },
+      { "cmd": "1", "retries": 2 },
+      { "msg": "12", "retries": 2 },
+      { "msg": "13", "retries": 2 },
+      { "msg": "14", "onlyIfChanges": true, "retries": 2 },
+      { "cmd": "1", "onlyIfChanges": true, "retries": 2 }
     ],
     "finally": [
-      { "msg": "17" },
-      { "commit": true }
+      { "msg": "17", "retries": 2 },
+      { "commit": true, "retries": 2 }
     ]
   },
   "3": {
     "rounds": 4,
     "start": [],
     "loop": [
-      { "tree": "0" },
-      { "workflow": "4" },
-      { "tree": "0" },
-      { "workflow": "2" }
+      { "tree": "0", "retries": 2 },
+      { "workflow": "4", "retries": 2 },
+      { "tree": "0", "retries": 2 },
+      { "workflow": "2", "retries": 2 }
     ],
     "finally": []
   },
   "4": {
     "rounds": 2,
+    "stopAfterEmpty": 1,
     "start": [
       { "msg": "1" },
       { "msg": "16" },
@@ -62,16 +65,16 @@
       { "msg": "4" }
     ],
     "loop": [
-      { "tree": "1" },
-      { "cmd": "1" },
-      { "msg": "6" },
-      { "msg": "7" },
-      { "msg": "5", "onlyIfChanges": true },
-      { "cmd": "1", "onlyIfChanges": true }
+      { "tree": "1", "retries": 2 },
+      { "cmd": "1", "retries": 2 },
+      { "msg": "6", "retries": 2 },
+      { "msg": "7", "retries": 2 },
+      { "msg": "5", "onlyIfChanges": true, "retries": 2 },
+      { "cmd": "1", "onlyIfChanges": true, "retries": 2 }
     ],
     "finally": [
-      { "msg": "17" },
-      { "commit": true }
+      { "msg": "17", "retries": 2 },
+      { "commit": true, "retries": 2 }
     ]
   }
 }

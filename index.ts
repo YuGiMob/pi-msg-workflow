@@ -28,7 +28,7 @@ function clip(text: string | undefined, max: number): string {
 }
 
 function describeStep(step: LoopStep, messages: Record<string, string>, commands: Record<string, string>, workflows: Record<string, WorkflowConfig>, vars: Record<string, string> = {}): string {
-  const suffix = `${step.onlyIfChanges ? " (if-changes)" : ""}${step.timeout !== undefined ? ` (timeout ${step.timeout}ms)` : ""}`;
+  const suffix = `${step.onlyIfChanges ? " (if-changes)" : ""}${step.timeout !== undefined ? ` (timeout ${step.timeout}ms)` : ""}${step.retries !== undefined ? ` (retries ${step.retries})` : ""}`;
   if (step.msg !== undefined) {
     const raw = messages[step.msg];
     return `msg ${step.msg}${suffix}: ${clip(raw === undefined ? undefined : interpolateText(raw, vars), 50)}`;
@@ -344,7 +344,8 @@ export default function (pi: ExtensionAPI) {
           steps.length > 0 ? steps.map((step) => describeStep(step, messages, commands, workflows, vars)).join(", ") : "(none)";
         const loopLines = loopSections(config).map((section, i) => `loop${i === 0 ? "" : ` ${i + 1}`}: ${describeSteps(section)}`).join("\n");
         const varsLine = Object.keys(vars).length > 0 ? `\nvars: ${JSON.stringify(vars)}` : "";
-        ctx.ui.notify(`[pi-msg-workflow] Dry run: Workflow ${index}, ${rounds} round${rounds === 1 ? "" : "s"}${varsLine}\nstart: ${describeSteps(config.start)}\n${loopLines}\nfinally: ${describeSteps(config.finally)}`, "info");
+        const earlyLine = config.stopAfterEmpty !== undefined ? `, early-exit after ${config.stopAfterEmpty} empty` : "";
+        ctx.ui.notify(`[pi-msg-workflow] Dry run: Workflow ${index}, ${rounds} round${rounds === 1 ? "" : "s"}${earlyLine}${varsLine}\nstart: ${describeSteps(config.start)}\n${loopLines}\nfinally: ${describeSteps(config.finally)}`, "info");
         return;
       }
       await runWorkflow(pi, ctx, config, index, rounds, messages, vars);

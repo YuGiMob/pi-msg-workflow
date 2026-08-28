@@ -3,7 +3,7 @@ import { Key, decodeKittyPrintable, matchesKey, visibleWidth, type OverlayHandle
 import { getMessages, setMessages } from "./messages.js";
 import { getCommands, setCommands } from "./commands.js";
 import { MAX_ROUNDS, MAX_LOOP_SECTIONS } from "./constants.js";
-import { getWorkflows, getWorkflowConfig, getWorkflowIssues, setWorkflowConfig, deleteWorkflowConfig, referencedIndices, referencedCommands, referencedWorkflows, loopSections, totalLoopSteps, isNumericString, isValidTimeout, type LoopStep, type WorkflowConfig } from "./workflow-config.js";
+import { getWorkflows, getWorkflowConfig, getWorkflowIssues, setWorkflowConfig, deleteWorkflowConfig, referencedIndices, referencedCommands, referencedWorkflows, loopSections, totalLoopSteps, isNumericString, isValidTimeout, isValidRetries, isValidStopAfterEmpty, type LoopStep, type WorkflowConfig } from "./workflow-config.js";
 import { compareNumericKeys } from "./json-file.js";
 import { errorMessage } from "./errors.js";
 
@@ -144,13 +144,37 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   return aKeys.every((key, i) => key === bKeys[i] && deepEqual((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
 }
 
-function validateTimeoutValue(value: string): string | null {
+function validateOptionalNumeric(value: string, isValid: (n: number) => boolean, message: string): string | null {
   if (value === "") return null;
-  return isNumericString(value) && isValidTimeout(Number(value)) ? null : "Timeout must be 1000-600000 or empty to clear.";
+  return isNumericString(value) && isValid(Number(value)) ? null : message;
+}
+
+function formatOptionalPrompt(current: number | undefined, label: string, emptyAction: string): string {
+  return current === undefined ? `${label} (empty to ${emptyAction}): ` : `${label} (current: ${current}, empty to ${emptyAction}): `;
+}
+
+function validateTimeoutValue(value: string): string | null {
+  return validateOptionalNumeric(value, isValidTimeout, "Timeout must be 1000-600000 or empty to clear.");
 }
 
 function formatTimeoutPrompt(current: number | undefined): string {
-  return current === undefined ? "timeout ms (1000-600000, empty to clear): " : `timeout ms (current: ${current}, empty to clear): `;
+  return formatOptionalPrompt(current, "timeout ms (1000-600000)", "clear");
+}
+
+function validateRetriesValue(value: string): string | null {
+  return validateOptionalNumeric(value, isValidRetries, "Retries must be 1-3 or empty to clear.");
+}
+
+function formatRetriesPrompt(current: number | undefined): string {
+  return formatOptionalPrompt(current, "retries (1-3)", "clear");
+}
+
+function validateStopAfterEmptyValue(value: string): string | null {
+  return validateOptionalNumeric(value, isValidStopAfterEmpty, `Stop must be 1-${MAX_ROUNDS} or empty to clear.`);
+}
+
+function formatStopAfterEmptyPrompt(current: number | undefined): string {
+  return current === undefined ? `stop after empty rounds (1-${MAX_ROUNDS}, empty to disable): ` : `stop after empty rounds (current: ${current}, empty to disable): `;
 }
 abstract class BaseEditorTab implements EditorTab {
   abstract readonly name: string;
@@ -321,10 +345,12 @@ interface WorkflowDraft {
   start: LoopStep[];
   tree: string;
   treeTimeout?: number;
+  treeRetries?: number;
   loop: LoopStep[];
   finally: LoopStep[];
   finallyOnError: boolean;
-  extraSections: { tree: string; treeTimeout?: number; loop: LoopStep[] }[];
+  stopAfterEmpty?: number;
+  extraSections: { tree: string; treeTimeout?: number; treeRetries?: number; loop: LoopStep[] }[];
 }
 
 type WorkflowSnapshot = WorkflowDraft & { selection: number };
@@ -335,7 +361,7 @@ type SelectableKind = "start" | "tree" | "loop" | "finally";
 type LoadResult = { ok: true; flash?: string } | { ok: false; flash: string };
 export class WorkflowTab extends BaseEditorTab implements EditorTab {
   private index = "1";
-  readonly footerHints = "j/k sel · e edit · a add · x del · d del-wf · J/K move · t if-chg · o t-out · [ ] rnds · f fin-err · n new-loop · w switch · u undo · s save";
+  readonly footerHints = "j/k sel · e edit · a add · x del · d del-wf · J/K move · t if-chg · o t-out · r retries · y early-exit · [ ] rnds · f fin-err · n new-loop · w switch · u undo · s save";
   readonly draft: WorkflowDraft;
   private selection = 0;
   private savedSnapshot: WorkflowSnapshot;
@@ -356,20 +382,20 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
   private loadWorkflow(index: string): LoadResult {
     const { config, errors } = getWorkflowConfig(index);
     const sections = loopSections(config);
-    const draftSections: { tree: string; treeTimeout?: number; loop: LoopStep[] }[] = [];
+    const draftSections: { tree: string; treeTimeout?: number; treeRetries?: number; loop: LoopStep[] }[] = [];
     let flash: string | undefined;
     for (let s = 0; s < sections.length; s++) {
       const section = sections[s]!;
       const first = section[0];
       if (first?.tree !== undefined) {
-        draftSections.push({ tree: first.tree, treeTimeout: first.timeout, loop: section.slice(1) });
+        draftSections.push({ tree: first.tree, treeTimeout: first.timeout, treeRetries: first.retries, loop: section.slice(1) });
       } else {
         const treeIndex = section.findIndex((step) => step.tree !== undefined);
         if (treeIndex === -1) {
           this.loadFailedIndex = index;
           return { ok: false, flash: `Workflow ${index} has no tree step in loop section ${s + 1}. Fix workflow.json first` };
         }
-        draftSections.push({ tree: section[treeIndex]!.tree!, treeTimeout: section[treeIndex]!.timeout, loop: section.filter((_, i) => i !== treeIndex) });
+        draftSections.push({ tree: section[treeIndex]!.tree!, treeTimeout: section[treeIndex]!.timeout, treeRetries: section[treeIndex]!.retries, loop: section.filter((_, i) => i !== treeIndex) });
         flash = `Workflow ${index}: misplaced tree step in loop section ${s + 1} moved to the section start`;
       }
     }
@@ -377,11 +403,13 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     this.index = index;
     this.draft.rounds = config.rounds;
     this.draft.finallyOnError = config.finallyOnError === true;
+    this.draft.stopAfterEmpty = config.stopAfterEmpty;
     this.draft.start = config.start.map((step) => ({ ...step }));
     this.draft.tree = draftSections[0]!.tree;
     this.draft.treeTimeout = draftSections[0]!.treeTimeout;
+    this.draft.treeRetries = draftSections[0]!.treeRetries;
     this.draft.loop = draftSections[0]!.loop.map((step) => ({ ...step }));
-    this.draft.extraSections = draftSections.slice(1).map((section) => ({ tree: section.tree, treeTimeout: section.treeTimeout, loop: section.loop.map((step) => ({ ...step })) }));
+    this.draft.extraSections = draftSections.slice(1).map((section) => ({ tree: section.tree, treeTimeout: section.treeTimeout, treeRetries: section.treeRetries, loop: section.loop.map((step) => ({ ...step })) }));
     this.draft.finally = config.finally.map((step) => ({ ...step }));
     this.selection = 0;
     this.savedSnapshot = this.snapshot();
@@ -446,10 +474,12 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       start: this.draft.start.map((step) => ({ ...step })),
       tree: this.draft.tree,
       treeTimeout: this.draft.treeTimeout,
+      treeRetries: this.draft.treeRetries,
       loop: this.draft.loop.map((step) => ({ ...step })),
-      extraSections: this.draft.extraSections.map((section) => ({ tree: section.tree, treeTimeout: section.treeTimeout, loop: section.loop.map((step) => ({ ...step })) })),
+      extraSections: this.draft.extraSections.map((section) => ({ tree: section.tree, treeTimeout: section.treeTimeout, treeRetries: section.treeRetries, loop: section.loop.map((step) => ({ ...step })) })),
       finally: this.draft.finally.map((step) => ({ ...step })),
       finallyOnError: this.draft.finallyOnError,
+      stopAfterEmpty: this.draft.stopAfterEmpty,
       selection: this.selection,
     };
   }
@@ -458,10 +488,12 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     this.draft.start = snap.start;
     this.draft.tree = snap.tree;
     this.draft.treeTimeout = snap.treeTimeout;
+    this.draft.treeRetries = snap.treeRetries;
     this.draft.loop = snap.loop;
     this.draft.extraSections = snap.extraSections;
     this.draft.finally = snap.finally;
     this.draft.finallyOnError = snap.finallyOnError;
+    this.draft.stopAfterEmpty = snap.stopAfterEmpty;
     this.selection = Math.min(snap.selection, this.rowCount() - 1);
   }
   private equalsSaved(): boolean {
@@ -469,11 +501,13 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     return current.rounds === this.savedSnapshot.rounds
       && current.tree === this.savedSnapshot.tree
       && current.treeTimeout === this.savedSnapshot.treeTimeout
+      && current.treeRetries === this.savedSnapshot.treeRetries
       && deepEqual(current.start, this.savedSnapshot.start)
       && deepEqual(current.loop, this.savedSnapshot.loop)
       && deepEqual(current.extraSections, this.savedSnapshot.extraSections)
       && deepEqual(current.finally, this.savedSnapshot.finally)
-      && current.finallyOnError === this.savedSnapshot.finallyOnError;
+      && current.finallyOnError === this.savedSnapshot.finallyOnError
+      && current.stopAfterEmpty === this.savedSnapshot.stopAfterEmpty;
   }
   private undo(): void {
     this.performUndo((snap) => this.restore(snap as WorkflowSnapshot), () => this.equalsSaved());
@@ -491,6 +525,9 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
   private sectionTreeTimeout(section: number): number | undefined {
     return section === 0 ? this.draft.treeTimeout : this.draft.extraSections[section - 1]!.treeTimeout;
   }
+  private sectionTreeRetries(section: number): number | undefined {
+    return section === 0 ? this.draft.treeRetries : this.draft.extraSections[section - 1]!.treeRetries;
+  }
   private setSectionTree(section: number, value: string): void {
     if (section === 0) this.draft.tree = value;
     else this.draft.extraSections[section - 1]!.tree = value;
@@ -498,6 +535,10 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
   private setSectionTreeTimeout(section: number, value: number | undefined): void {
     if (section === 0) this.draft.treeTimeout = value;
     else this.draft.extraSections[section - 1]!.treeTimeout = value;
+  }
+  private setSectionTreeRetries(section: number, value: number | undefined): void {
+    if (section === 0) this.draft.treeRetries = value;
+    else this.draft.extraSections[section - 1]!.treeRetries = value;
   }
   private sectionOffset(section: number): number {
     let offset = this.draft.start.length;
@@ -586,6 +627,14 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     }
     if (matchesKey(data, "o")) {
       this.editTimeout(kind, section, position);
+      return true;
+    }
+    if (matchesKey(data, "r")) {
+      this.editRetries(kind, section, position);
+      return true;
+    }
+    if (matchesKey(data, "y")) {
+      this.editStopAfterEmpty();
       return true;
     }
     if (matchesKey(data, "u")) {
@@ -767,39 +816,65 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     });
     this.popup("if-changes toggled. Press s to save.");
   }
-  private editTimeout(kind: SelectableKind, section: number, position: number): void {
+  private editStepNumeric(
+    kind: SelectableKind,
+    section: number,
+    position: number,
+    field: "timeout" | "retries",
+    getTree: (section: number) => number | undefined,
+    setTree: (section: number, value: number | undefined) => void,
+    format: (current: number | undefined) => string,
+    validate: (value: string) => string | null,
+    successMessage: string
+  ): void {
     if (kind === "tree") {
-      this.commitInput(formatTimeoutPrompt(this.sectionTreeTimeout(section)), validateTimeoutValue, (value) => {
-        if (value === "") this.setSectionTreeTimeout(section, undefined);
-        else this.setSectionTreeTimeout(section, Number(value));
-        this.popup("Timeout updated. Press s to save.");
+      this.commitInput(format(getTree(section)), validate, (value) => {
+        if (value === "") setTree(section, undefined);
+        else setTree(section, Number(value));
+        this.popup(successMessage);
       });
       return;
     }
     const target = kind === "start" ? this.draft.start : kind === "loop" ? this.sectionLoop(section) : this.draft.finally;
     const step = target[position]!;
-    this.commitInput(formatTimeoutPrompt(step.timeout), validateTimeoutValue, (value) => {
+    this.commitInput(format(step[field]), validate, (value) => {
       if (value === "") {
         const next = { ...step } as Record<string, unknown>;
-        delete next.timeout;
+        delete next[field];
         target[position] = next as LoopStep;
       } else {
-        target[position] = { ...step, timeout: Number(value) };
+        target[position] = { ...step, [field]: Number(value) };
       }
-      this.popup("Timeout updated. Press s to save.");
+      this.popup(successMessage);
+    });
+  }
+
+  private editTimeout(kind: SelectableKind, section: number, position: number): void {
+    this.editStepNumeric(kind, section, position, "timeout", (s) => this.sectionTreeTimeout(s), (s, v) => this.setSectionTreeTimeout(s, v), formatTimeoutPrompt, validateTimeoutValue, "Timeout updated. Press s to save.");
+  }
+
+  private editRetries(kind: SelectableKind, section: number, position: number): void {
+    this.editStepNumeric(kind, section, position, "retries", (s) => this.sectionTreeRetries(s), (s, v) => this.setSectionTreeRetries(s, v), formatRetriesPrompt, validateRetriesValue, "Retries updated. Press s to save.");
+  }
+  private editStopAfterEmpty(): void {
+    this.commitInput(formatStopAfterEmptyPrompt(this.draft.stopAfterEmpty), validateStopAfterEmptyValue, (value) => {
+      if (value === "") this.draft.stopAfterEmpty = undefined;
+      else this.draft.stopAfterEmpty = Number(value);
+      this.popup("Early-exit updated. Press s to save.");
     });
   }
   private buildConfig(): WorkflowConfig {
     const config: WorkflowConfig = {
       rounds: this.draft.rounds,
       start: [...this.draft.start],
-      loop: [{ tree: this.draft.tree, ...(this.draft.treeTimeout !== undefined ? { timeout: this.draft.treeTimeout } : {}) }, ...this.draft.loop.map((step) => ({ ...step }))],
+      loop: [{ tree: this.draft.tree, ...(this.draft.treeTimeout !== undefined ? { timeout: this.draft.treeTimeout } : {}), ...(this.draft.treeRetries !== undefined ? { retries: this.draft.treeRetries } : {}) }, ...this.draft.loop.map((step) => ({ ...step }))],
       finally: this.draft.finally.map((step) => ({ ...step })),
       finallyOnError: this.draft.finallyOnError || undefined,
+      ...(this.draft.stopAfterEmpty !== undefined ? { stopAfterEmpty: this.draft.stopAfterEmpty } : {}),
     };
     for (let i = 0; i < this.draft.extraSections.length; i++) {
       const section = this.draft.extraSections[i]!;
-      (config as unknown as Record<string, unknown>)[`loop${i + 2}`] = [{ tree: section.tree, ...(section.treeTimeout !== undefined ? { timeout: section.treeTimeout } : {}) }, ...section.loop.map((step) => ({ ...step }))];
+      (config as unknown as Record<string, unknown>)[`loop${i + 2}`] = [{ tree: section.tree, ...(section.treeTimeout !== undefined ? { timeout: section.treeTimeout } : {}), ...(section.treeRetries !== undefined ? { retries: section.treeRetries } : {}) }, ...section.loop.map((step) => ({ ...step }))];
     }
     return config;
   }
@@ -867,7 +942,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     };
     const renderSteps = (steps: LoopStep[], selected: (i: number) => boolean) => {
       steps.forEach((step, i) => {
-        const suffix = `${step.onlyIfChanges ? " [if-changes]" : ""}${step.timeout !== undefined ? ` [timeout ${step.timeout}ms]` : ""}`;
+        const suffix = `${step.onlyIfChanges ? " [if-changes]" : ""}${step.timeout !== undefined ? ` [timeout ${step.timeout}ms]` : ""}${step.retries !== undefined ? ` [retries ${step.retries}]` : ""}`;
         if (step.msg !== undefined) {
           row(`msg ${step.msg}${suffix}: ${storePreview(messages, step.msg)}`, selected(i));
         } else if (step.cmd !== undefined) {
@@ -881,13 +956,13 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
         }
       });
     };
-    lines.push(th.fg("dim", truncate(` Workflow ${this.index} · Rounds: ${this.draft.rounds} · fin-err: ${this.draft.finallyOnError ? "on" : "off"}   ([ ] change · f toggle · w switch)`, innerWidth)));
+    lines.push(th.fg("dim", truncate(` Workflow ${this.index} · Rounds: ${this.draft.rounds} · fin-err: ${this.draft.finallyOnError ? "on" : "off"}${this.draft.stopAfterEmpty !== undefined ? ` · early-exit: ${this.draft.stopAfterEmpty}` : ""}   ([ ] change · f toggle · w switch)`, innerWidth)));
     lines.push(th.fg("dim", " start"));
     renderSteps(this.draft.start, (i) => this.selection === i);
     for (let s = 0; s < this.sectionCount(); s++) {
       lines.push(th.fg("dim", s === 0 ? " loop" : ` loop ${s + 1}`));
       const offset = this.sectionOffset(s);
-      row(`tree → ${this.sectionTree(s)}${this.sectionTreeTimeout(s) !== undefined ? ` [timeout ${this.sectionTreeTimeout(s)}ms]` : ""}: ${treePreview(this.sectionTree(s))}  (fixed first)`, this.selection === offset);
+      row(`tree → ${this.sectionTree(s)}${this.sectionTreeTimeout(s) !== undefined ? ` [timeout ${this.sectionTreeTimeout(s)}ms]` : ""}${this.sectionTreeRetries(s) !== undefined ? ` [retries ${this.sectionTreeRetries(s)}]` : ""}: ${treePreview(this.sectionTree(s))}  (fixed first)`, this.selection === offset);
       renderSteps(this.sectionLoop(s), (i) => this.selection === offset + 1 + i);
     }
     lines.push(th.fg("dim", " finally"));
