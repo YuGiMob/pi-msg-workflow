@@ -30,28 +30,23 @@ export function lastAssistantMessageText(entries: SessionEntry[]): string | unde
   return undefined;
 }
 
-export function countLeadingPhaseMatches(entries: SessionEntry[], expected: string[]): number {
-  let matched = 0;
-  for (const entry of entries) {
-    const text = userMessageText(entry);
-    if (text === undefined) continue;
-    if (matched < expected.length && text === expected[matched]) {
-      matched++;
-    } else {
-      break;
-    }
-  }
-  return matched;
-}
-
-export function countPhaseMatches(entries: SessionEntry[], expected: string[]): number {
+function countMatches(entries: SessionEntry[], expected: string[], leadingOnly: boolean): number {
   let matched = 0;
   for (const entry of entries) {
     const text = userMessageText(entry);
     if (text === undefined) continue;
     if (matched < expected.length && text === expected[matched]) matched++;
+    else if (leadingOnly) break;
   }
   return matched;
+}
+
+export function countLeadingPhaseMatches(entries: SessionEntry[], expected: string[]): number {
+  return countMatches(entries, expected, true);
+}
+
+export function countPhaseMatches(entries: SessionEntry[], expected: string[]): number {
+  return countMatches(entries, expected, false);
 }
 
 function lastNonUserMessage(entries: SessionEntry[], from: number, to: number): SessionEntry | undefined {

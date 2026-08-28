@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { errorMessage } from "./errors.js";
+import { errorMessage, execFailureMessage } from "./errors.js";
 
 export type CommandResult =
   | { ok: true }
@@ -53,9 +53,7 @@ export function splitCommand(command: string): string[] | null {
 export function commandFailureMessage(num: string, result: Extract<CommandResult, { ok: false }>): string {
   if (result.reason === "empty") return `Command ${num} is empty.`;
   if (result.reason === "unterminated") return `Command ${num} has an unterminated quote.`;
-  if (result.stderr.trim() !== "") return `Command ${num} failed: ${result.stderr}`;
-  if (result.stdout.trim() !== "") return `Command ${num} failed: ${result.stdout}`;
-  return `Command ${num} failed with no error output`;
+  return execFailureMessage(`Command ${num} failed`, result.stderr, result.stdout);
 }
 
 export async function runCommand(

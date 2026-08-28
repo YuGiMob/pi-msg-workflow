@@ -1,18 +1,16 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { errorMessage } from "./errors.js";
+import { errorMessage, execFailureMessage } from "./errors.js";
 
 export type CommitResult =
   | { ok: true; committed: boolean }
   | { ok: false; reason: "failed"; stderr: string; stdout: string };
 
 export function commitFailureMessage(result: Extract<CommitResult, { ok: false }>): string {
-  if (result.stderr.trim() !== "") return `Commit failed: ${result.stderr}`;
-  if (result.stdout.trim() !== "") return `Commit failed: ${result.stdout}`;
-  return "Commit failed with no error output";
+  return execFailureMessage("Commit failed", result.stderr, result.stdout);
 }
 
 function commitMessage(nameOnlyOutput: string): string {
-  const files = nameOnlyOutput.trim().split(/\s+/).filter(Boolean);
+  const files = nameOnlyOutput.split("\n").map((s) => s.trim()).filter(Boolean);
   if (files.length === 0) return "Update";
   const shown = files.slice(0, 5);
   const suffix = files.length > 5 ? ` and ${files.length - 5} more` : "";

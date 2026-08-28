@@ -51,12 +51,16 @@ const DEFAULT_LOOP: LoopStep[] = [
 ];
 const DEFAULT_FINALLY: StartStep[] = [{ msg: "8" }];
 
+function cloneSteps<T>(steps: T[]): T[] {
+  return steps.map((step) => ({ ...(step as unknown as Record<string, unknown>) } as T));
+}
+
 function defaultConfig(): WorkflowConfig {
   return {
     rounds: DEFAULT_ROUNDS,
-    start: DEFAULT_START.map((step) => ({ ...step })),
-    loop: DEFAULT_LOOP.map((step) => ({ ...step })),
-    finally: DEFAULT_FINALLY.map((step) => ({ ...step })),
+    start: cloneSteps(DEFAULT_START),
+    loop: cloneSteps(DEFAULT_LOOP),
+    finally: cloneSteps(DEFAULT_FINALLY),
   };
 }
 
@@ -73,22 +77,48 @@ export function isNumericString(value: unknown): value is string {
   return typeof value === "string" && /^\d+$/.test(value);
 }
 
-function isStep(value: unknown): value is LoopStep {
+function isStepForAllowedActions(value: unknown, allowed: string[], checkOnlyIfChanges: boolean): boolean {
   const entry = stepAction(value);
   if (entry === null) return false;
-  if (entry.action === "commit") return entry.content === true && !("onlyIfChanges" in entry.step);
-  if (entry.action !== "tree" && entry.action !== "msg" && entry.action !== "cmd" && entry.action !== "workflow") return false;
+  if (entry.action === "commit") return entry.content === true && (!checkOnlyIfChanges || !("onlyIfChanges" in entry.step));
+  if (!allowed.includes(entry.action)) return false;
   if (!isNumericString(entry.content)) return false;
-  if (entry.action === "tree" && "onlyIfChanges" in entry.step) return false;
-  return !("onlyIfChanges" in entry.step) || typeof entry.step.onlyIfChanges === "boolean";
+  if (checkOnlyIfChanges) {
+    if (entry.action === "tree" && "onlyIfChanges" in entry.step) return false;
+    return !("onlyIfChanges" in entry.step) || typeof entry.step.onlyIfChanges === "boolean";
+  }
+  return !("onlyIfChanges" in entry.step);
+}
+
+function isStep(value: unknown): value is LoopStep {
+  return isStepForAllowedActions(value, ["tree", "msg", "cmd", "workflow"], true);
 }
 
 function isStartStep(value: unknown): value is StartStep {
-  const entry = stepAction(value);
-  if (entry === null) return false;
-  if (entry.action === "commit") return entry.content === true;
-  if (entry.action !== "msg" && entry.action !== "cmd" && entry.action !== "workflow") return false;
-  return !("onlyIfChanges" in entry.step) && isNumericString(entry.content);
+  return isStepForAllowedActions(value, ["msg", "cmd", "workflow"], false);
+}
+
+function parseStepsField<T>(input: Record<string, unknown>, errors: string[], tag: string, field: string, fallback: T[], validator: (v: unknown) => boolean, allowPartial: boolean): T[] {
+  const value = input[field];
+  if (value === undefined) return cloneSteps(fallback);
+  if (!Array.isArray(value)) {
+    if (allowPartial) errors.push(`${tag}Invalid ${field}: must be an array of steps. Using the default.`);
+    else errors.push(`${tag}Invalid ${field}: must be an array of msg/cmd/workflow/commit steps. Using the default.`);
+    return cloneSteps(fallback);
+  }
+  if (allowPartial) {
+    const steps: T[] = [];
+    for (const entry of value) {
+      if (validator(entry)) steps.push(entry as T);
+      else errors.push(`${tag}Invalid ${field} step ${JSON.stringify(entry)}. Skipped.`);
+    }
+    if (steps.length > 0) return steps;
+    errors.push(`${tag}No valid ${field} steps. Using the default.`);
+    return cloneSteps(fallback);
+  }
+  if (value.every(validator)) return value as T[];
+  errors.push(`${tag}Invalid ${field}: must be an array of msg/cmd/workflow/commit steps. Using the default.`);
+  return cloneSteps(fallback);
 }
 
 function parseStartSteps(
@@ -98,11 +128,7 @@ function parseStartSteps(
   field: "start" | "finally",
   fallback: StartStep[],
 ): StartStep[] {
-  const value = input[field];
-  if (value === undefined) return fallback.map((step) => ({ ...step }));
-  if (Array.isArray(value) && value.every((step) => isStartStep(step))) return value as StartStep[];
-  errors.push(`${tag}Invalid ${field}: must be an array of msg/cmd/workflow/commit steps. Using the default.`);
-  return fallback.map((step) => ({ ...step }));
+  return parseStepsField(input, errors, tag, field, fallback, isStartStep, false);
 }
 
 function parseConfig(input: Record<string, unknown>, errors: string[], label: string): WorkflowConfig {
@@ -135,12 +161,9 @@ function parseConfig(input: Record<string, unknown>, errors: string[], label: st
   const loop4 = parseLoopSection(input, errors, tag, "loop4", []);
   const loop5 = parseLoopSection(input, errors, tag, "loop5", []);
 
-  if (loop.length > 0 && loop[0]!.tree === undefined) {
-    errors.push(`${tag}The first step of the loop must be a tree step (context reset).`);
-  }
-  for (const [key, section] of [["loop2", loop2], ["loop3", loop3], ["loop4", loop4], ["loop5", loop5]] as const) {
+  for (const [key, section] of [["loop", loop], ["loop2", loop2], ["loop3", loop3], ["loop4", loop4], ["loop5", loop5]] as const) {
     if (section.length > 0 && section[0]!.tree === undefined) {
-      errors.push(`${tag}The first step of ${key} must be a tree step (context reset).`);
+      errors.push(`${tag}The first step of ${key === "loop" ? "the loop" : key} must be a tree step (context reset).`);
     }
   }
 
@@ -153,23 +176,7 @@ function parseConfig(input: Record<string, unknown>, errors: string[], label: st
 }
 
 function parseLoopSection(input: Record<string, unknown>, errors: string[], tag: string, key: string, fallback: LoopStep[]): LoopStep[] {
-  const value = input[key];
-  if (value === undefined) return fallback.map((step) => ({ ...step }));
-  if (Array.isArray(value)) {
-    const steps: LoopStep[] = [];
-    for (const entry of value) {
-      if (isStep(entry)) {
-        steps.push(entry);
-      } else {
-        errors.push(`${tag}Invalid ${key} step ${JSON.stringify(entry)}. Skipped.`);
-      }
-    }
-    if (steps.length > 0) return steps;
-    errors.push(`${tag}No valid ${key} steps. Using the default.`);
-    return fallback.map((step) => ({ ...step }));
-  }
-  errors.push(`${tag}Invalid ${key}: must be an array of steps. Using the default.`);
-  return fallback.map((step) => ({ ...step }));
+  return parseStepsField(input, errors, tag, key, fallback, isStep, true);
 }
 
 function isSingleConfig(value: Record<string, unknown>): boolean {

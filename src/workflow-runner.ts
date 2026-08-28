@@ -5,7 +5,7 @@ import { errorMessage } from "./errors.js";
 import { countLeadingPhaseMatches, countPhaseMatches, countUserTextMatches, findAnchorAfterMessage, lastAssistantMessageText } from "./session-helpers.js";
 import { runCommand, commandFailureMessage } from "./command-runner.js";
 import { runCommit, commitFailureMessage } from "./commit.js";
-import { getWorkflowConfig, loopSections, type WorkflowConfig, type StartStep } from "./workflow-config.js";
+import { findWorkflowCycle, getWorkflowConfig, loopSections, missingReferences, type WorkflowConfig, type StartStep } from "./workflow-config.js";
 
 const SEND_START_TIMEOUT_MS = 5000;
 const SEND_MAX_ATTEMPTS = 3;
@@ -325,9 +325,33 @@ async function runSubWorkflow(pi: ExtensionAPI, ctx: ExtensionCommandContext, in
     ctx.ui.notify(`Circular workflow reference: ${[...workflowStack, index].join(" → ")}`, "error");
     return false;
   }
-  const { config, exists } = getWorkflowConfig(index);
+  const { config, exists, workflows } = getWorkflowConfig(index);
   if (!exists) {
     notifyMissingEntry(ctx, "Workflow", index, "Use /workflow-edit and press w to create it.", "error");
+    return false;
+  }
+  const messages = getMessages();
+  const commands = getCommands();
+  const { messages: missing, commands: missingCommands, workflows: missingWorkflows } = missingReferences(config, messages, commands, workflows);
+  if (missing.length > 0) {
+    ctx.ui.notify(`Missing messages in messages.json: ${missing.join(", ")}. Restore the default stores with /workflow-reset or add them with /change-msg.`, "error");
+    return false;
+  }
+  if (missingCommands.length > 0) {
+    ctx.ui.notify(`Missing commands in commands.json: ${missingCommands.join(", ")}. Restore the default stores with /workflow-reset or add them with /change-cmd.`, "error");
+    return false;
+  }
+  if (missingWorkflows.length > 0) {
+    ctx.ui.notify(`Missing workflows in workflow.json: ${missingWorkflows.join(", ")}. Create them with /workflow-edit (press w).`, "error");
+    return false;
+  }
+  const cycle = findWorkflowCycle(workflows, index);
+  if (cycle !== null) {
+    ctx.ui.notify(`Circular workflow reference: ${cycle.join(" → ")}. Fix workflow.json first.`, "error");
+    return false;
+  }
+  if (loopSections(config).some((section) => section.length === 0 || section[0]!.tree === undefined)) {
+    ctx.ui.notify("The first step of every loop section must be a tree step (context reset)", "error");
     return false;
   }
   workflowStack.push(index);

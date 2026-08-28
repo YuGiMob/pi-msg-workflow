@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 export function readJsonFile(file: string): unknown | null {
   if (!existsSync(file)) return null;
@@ -22,8 +23,16 @@ export function readJsonObject(
 
 export function writeJsonAtomic(file: string, value: unknown): void {
   const tmp = `${file}.tmp`;
-  writeFileSync(tmp, JSON.stringify(value, null, 2), "utf-8");
-  renameSync(tmp, file);
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(tmp, JSON.stringify(value, null, 2), "utf-8");
+    renameSync(tmp, file);
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {}
+    throw err;
+  }
 }
 
 export function compareNumericKeys(a: string, b: string): number {
