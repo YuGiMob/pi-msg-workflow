@@ -5,7 +5,7 @@ import { errorMessage } from "./errors.js";
 import { countPhaseMatches, countUserTextMatches, findAnchorAfterMessage, lastAssistantMessageText } from "./session-helpers.js";
 import { runCommand, commandFailureMessage, type CommandResult } from "./command-runner.js";
 import { runCommit, commitFailureMessage, type CommitResult } from "./commit.js";
-import { getWorkflowConfig, getWorkflowRunError, loopSections, type WorkflowConfig, type StartStep } from "./workflow-config.js";
+import { getWorkflowConfig, getWorkflowRunError, loopSections, type WorkflowConfig, type LoopStep, type StartStep } from "./workflow-config.js";
 
 const SEND_START_TIMEOUT_MS = 5000;
 const SEND_MAX_ATTEMPTS = 3;
@@ -41,7 +41,6 @@ function resolveMessageText(num: string, vars: Record<string, string>, ctx: Exte
 function resolveCommandText(num: string, vars: Record<string, string>, ctx: ExtensionCommandContext): string | null {
   return resolveStoreText(getCommands(), "Command", num, vars, ctx);
 }
-
 function hasVarsBoundary(trimmed: string, start: number): boolean {
   const before = trimmed.slice(0, start);
   return before.length === 0 || /\s/.test(before[before.length - 1]!);
@@ -84,7 +83,6 @@ export function extractWorkflowVars(raw: string): { vars: Record<string, string>
   }
   return { vars: {} };
 }
-
 export function parseWorkflowArgs(raw: string): Record<string, string> {
   return extractWorkflowVars(raw).vars;
 }
@@ -101,9 +99,13 @@ async function withStepTimeout<T>(promise: Promise<T>, timeout: number | undefin
     }, timeout);
   });
   promise.catch(() => {});
-  const raced = await Promise.race([promise, timeoutPromise]);
-  if (timer !== undefined) clearTimeout(timer);
-  return raced as T | null;
+  let result: T | null;
+  try {
+    result = (await Promise.race([promise, timeoutPromise])) as T | null;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+  return result;
 }
 
 function retriesFor(step: { retries?: number }): number {
@@ -381,6 +383,21 @@ async function sendStoredMessage(
   }
   return true;
 }
+async function dispatchStep(pi: ExtensionAPI, ctx: ExtensionCommandContext, step: StartStep | LoopStep, vars: Record<string, string>, scope: string): Promise<boolean> {
+  const retries = retriesFor(step);
+  const timeout = step.timeout;
+  if (step.msg !== undefined) {
+    return sendStoredMessage(pi, ctx, step.msg, withWorkflowChain(`${scope}sending message ${step.msg}...`), vars, timeout, scope, retries);
+  }
+  if (step.cmd !== undefined) {
+    return runStoredCommand(pi, ctx, step.cmd, withWorkflowChain(`${scope}running `), vars, timeout, scope, retries);
+  }
+  if (step.workflow !== undefined) {
+    return runSubWorkflow(pi, ctx, step.workflow, vars, timeout, scope, retries);
+  }
+  if (step.commit === true) return runCommitStep(pi, ctx, timeout, scope, retries);
+  return true;
+}
 
 async function runOncePhase(
   pi: ExtensionAPI,
@@ -395,20 +412,14 @@ async function runOncePhase(
       ctx.ui.notify("Workflow stopped", "info");
       return false;
     }
+    if (step.msg !== undefined && skipped < skipMsgs) {
+      skipped++;
+      continue;
+    }
     if (step.msg !== undefined) {
-      if (skipped < skipMsgs) {
-        skipped++;
-        continue;
-      }
       const working = withWorkflowChain(`Sending message ${step.msg}...`);
       if (!(await sendStoredMessage(pi, ctx, step.msg, working, vars, step.timeout, "", retriesFor(step)))) return false;
-    } else if (step.cmd !== undefined) {
-      if (!(await runStoredCommand(pi, ctx, step.cmd, withWorkflowChain("Running "), vars, step.timeout, "", retriesFor(step)))) return false;
-    } else if (step.workflow !== undefined) {
-      if (!(await runSubWorkflow(pi, ctx, step.workflow, vars, step.timeout, "", retriesFor(step)))) return false;
-    } else if (step.commit === true) {
-      if (!(await runCommitStep(pi, ctx, step.timeout, "", retriesFor(step)))) return false;
-    }
+    } else if (!(await dispatchStep(pi, ctx, step, vars, ""))) return false;
   }
   return true;
 }
@@ -500,16 +511,7 @@ async function runPhases(
           if (!changed) continue;
           roundExecutedConditional = true;
         }
-        const retries = retriesFor(step);
-        if (step.workflow !== undefined) {
-          if (!(await runSubWorkflow(pi, ctx, step.workflow, vars, step.timeout, scope, retries))) return false;
-        } else if (step.cmd !== undefined) {
-          if (!(await runStoredCommand(pi, ctx, step.cmd, withWorkflowChain(`${scope}running `), vars, step.timeout, scope, retries))) return false;
-        } else if (step.msg !== undefined) {
-          if (!(await sendStoredMessage(pi, ctx, step.msg, withWorkflowChain(`${scope}sending message ${step.msg}...`), vars, step.timeout, scope, retries))) return false;
-        } else if (step.commit === true) {
-          if (!(await runCommitStep(pi, ctx, step.timeout, scope, retries))) return false;
-        }
+        if (!(await dispatchStep(pi, ctx, step, vars, scope))) return false;
       }
       if (roundHasConditional) {
         if (!roundExecutedConditional) {

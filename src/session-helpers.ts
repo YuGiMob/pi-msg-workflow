@@ -68,16 +68,17 @@ function lastNonUserBeforeNextUser(entries: SessionEntry[], from: number): Sessi
 
 export function findAnchorAfterMessage(entries: SessionEntry[], messageText: string): SessionEntry | undefined {
   let firstUserIndex = -1;
-  const messageIndices: number[] = [];
   for (let i = 0; i < entries.length; i++) {
-    const text = userMessageText(entries[i]);
-    if (text === undefined) continue;
-    if (firstUserIndex === -1) firstUserIndex = i;
-    if (text === messageText) messageIndices.push(i);
+    if (userMessageText(entries[i]) !== undefined) {
+      firstUserIndex = i;
+      break;
+    }
   }
-  for (let i = messageIndices.length - 1; i >= 0; i--) {
-    const anchor = lastNonUserBeforeNextUser(entries, messageIndices[i]! + 1);
-    if (anchor !== undefined) return anchor;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (userMessageText(entries[i]) === messageText) {
+      const anchor = lastNonUserBeforeNextUser(entries, i + 1);
+      if (anchor !== undefined) return anchor;
+    }
   }
   if (firstUserIndex === -1) return undefined;
   return lastNonUserBeforeNextUser(entries, firstUserIndex + 1);

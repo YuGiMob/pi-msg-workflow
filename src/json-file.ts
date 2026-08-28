@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -22,7 +23,7 @@ export function readJsonObject(
 }
 
 export function writeJsonAtomic(file: string, value: unknown): void {
-  const tmp = `${file}.tmp`;
+  const tmp = `${file}.tmp.${process.pid}.${randomUUID()}`;
   try {
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(tmp, JSON.stringify(value, null, 2), "utf-8");

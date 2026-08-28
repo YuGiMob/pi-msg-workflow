@@ -517,28 +517,32 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     return 1 + this.draft.extraSections.length;
   }
   private sectionLoop(section: number): LoopStep[] {
-    return section === 0 ? this.draft.loop : this.draft.extraSections[section - 1]!.loop;
+    if (section === 0) return this.draft.loop;
+    return this.draft.extraSections[section - 1]?.loop ?? [];
   }
   private sectionTree(section: number): string {
-    return section === 0 ? this.draft.tree : this.draft.extraSections[section - 1]!.tree;
+    if (section === 0) return this.draft.tree;
+    return this.draft.extraSections[section - 1]?.tree ?? "1";
   }
   private sectionTreeTimeout(section: number): number | undefined {
-    return section === 0 ? this.draft.treeTimeout : this.draft.extraSections[section - 1]!.treeTimeout;
+    if (section === 0) return this.draft.treeTimeout;
+    return this.draft.extraSections[section - 1]?.treeTimeout;
   }
   private sectionTreeRetries(section: number): number | undefined {
-    return section === 0 ? this.draft.treeRetries : this.draft.extraSections[section - 1]!.treeRetries;
+    if (section === 0) return this.draft.treeRetries;
+    return this.draft.extraSections[section - 1]?.treeRetries;
   }
   private setSectionTree(section: number, value: string): void {
     if (section === 0) this.draft.tree = value;
-    else this.draft.extraSections[section - 1]!.tree = value;
+    else if (this.draft.extraSections[section - 1]) this.draft.extraSections[section - 1]!.tree = value;
   }
   private setSectionTreeTimeout(section: number, value: number | undefined): void {
     if (section === 0) this.draft.treeTimeout = value;
-    else this.draft.extraSections[section - 1]!.treeTimeout = value;
+    else if (this.draft.extraSections[section - 1]) this.draft.extraSections[section - 1]!.treeTimeout = value;
   }
   private setSectionTreeRetries(section: number, value: number | undefined): void {
     if (section === 0) this.draft.treeRetries = value;
-    else this.draft.extraSections[section - 1]!.treeRetries = value;
+    else if (this.draft.extraSections[section - 1]) this.draft.extraSections[section - 1]!.treeRetries = value;
   }
   private sectionOffset(section: number): number {
     let offset = this.draft.start.length;

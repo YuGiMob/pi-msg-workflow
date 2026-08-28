@@ -10,7 +10,7 @@ import { resetUserData } from "./src/user-data.js";
 import { WorkflowEditorOverlay, WorkflowTab, MessagesTab, CommandsTab, MAX_OVERLAY_HEIGHT_RATIO, type EditorTab } from "./src/workflow-editor.js";
 import { errorMessage } from "./src/errors.js";
 import { captureConsoleMessages } from "./src/console-capture.js";
-import { isWorkflowRunning, requestWorkflowStop, runWorkflow, notifyMissingEntry, navigateToMessageAnchor, notifyNavigationStatus, extractWorkflowVars, interpolateText } from "./src/workflow-runner.js";
+import { requestWorkflowStop, isWorkflowRunning, runWorkflow, notifyMissingEntry, navigateToMessageAnchor, notifyNavigationStatus, extractWorkflowVars, interpolateText } from "./src/workflow-runner.js";
 
 const OVERLAY_OPTIONS = {
   overlay: true,
@@ -64,45 +64,41 @@ function requireArg(ctx: ExtensionCommandContext, args: string, usage: string): 
   return null;
 }
 
-function registerSendCommand(pi: ExtensionAPI, name: string): void {
+function registerStoreCommand(pi: ExtensionAPI, name: string, noun: string, getStore: () => Record<string, string>, execute: (value: string, num: string, ctx: ExtensionCommandContext) => Promise<boolean>): void {
+  const isMessage = noun === "Message";
   pi.registerCommand(name, {
-    description: "Send a predefined message by number",
-    getArgumentCompletions: (prefix) => storeCompletions(getMessages(), "Message", prefix),
+    description: isMessage ? "Send a predefined message by number" : "Perform a predefined command by number",
+    getArgumentCompletions: (prefix) => storeCompletions(getStore(), noun, prefix),
     handler: async (args, ctx: ExtensionCommandContext) => {
       if (!requireInteractive(ctx, name)) return;
       const num = requireArg(ctx, args, `/${name} <number>`);
       if (num === null) return;
-      const message = getMessages()[num];
-      if (!message) {
-        notifyMissingEntry(ctx, "Message", num, `Use /change-${name} ${num} "content" to create it.`);
+      const value = getStore()[num];
+      if (!value) {
+        notifyMissingEntry(ctx, noun, num, `Use /change-${name} ${num} "content" to create it.`);
         return;
       }
-      pi.sendUserMessage(message, { deliverAs: "followUp" });
-      ctx.ui.notify(`Message ${num} sent`, "info");
+      const ok = await execute(value, num, ctx);
+      if (!ok) return;
+      ctx.ui.notify(`${noun} ${num} ${isMessage ? "sent" : "executed"}`, "info");
     },
   });
 }
 
+function registerSendCommand(pi: ExtensionAPI, name: string): void {
+  registerStoreCommand(pi, name, "Message", getMessages, async (message) => {
+    pi.sendUserMessage(message, { deliverAs: "followUp" });
+    return true;
+  });
+}
 function registerPerformCommand(pi: ExtensionAPI, name: string): void {
-  pi.registerCommand(name, {
-    description: "Perform a predefined command by number",
-    getArgumentCompletions: (prefix) => storeCompletions(getCommands(), "Command", prefix),
-    handler: async (args, ctx: ExtensionCommandContext) => {
-      if (!requireInteractive(ctx, name)) return;
-      const num = requireArg(ctx, args, `/${name} <number>`);
-      if (num === null) return;
-      const command = getCommands()[num];
-      if (!command) {
-        notifyMissingEntry(ctx, "Command", num, `Use /change-${name} ${num} "content" to create it.`);
-        return;
-      }
-      const result = await runCommand(pi, command, `Running ${command}...`, ctx.ui);
-      if (!result.ok) {
-        ctx.ui.notify(commandFailureMessage(num, result), result.reason === "failed" ? "error" : "warning");
-        return;
-      }
-      ctx.ui.notify(`Command ${num} executed`, "info");
-    },
+  registerStoreCommand(pi, name, "Command", getCommands, async (command, num, ctx) => {
+    const result = await runCommand(pi, command, `Running ${command}...`, ctx.ui);
+    if (!result.ok) {
+      ctx.ui.notify(commandFailureMessage(num, result), result.reason === "failed" ? "error" : "warning");
+      return false;
+    }
+    return true;
   });
 }
 
@@ -213,24 +209,30 @@ export default function (pi: ExtensionAPI) {
           if (sink.overlay !== null) sink.overlay.showConsolePopup(text);
           else buffered.push(text);
         });
-        const tabs: EditorTab[] = [
-          new WorkflowTab(theme),
-          new MessagesTab(theme),
-          new CommandsTab(theme),
-        ];
-        const overlay = new WorkflowEditorOverlay({
-          title: "Workflow Editor",
-          tabs,
-          theme,
-          tui,
-          done: () => {
-            stopCapturing();
-            done();
-          },
-        });
-        sink.overlay = overlay;
-        for (const text of buffered) overlay.showConsolePopup(text);
-        return overlay;
+        const handleDone = () => {
+          try { stopCapturing(); } catch {}
+          done();
+        };
+        try {
+          const tabs: EditorTab[] = [
+            new WorkflowTab(theme),
+            new MessagesTab(theme),
+            new CommandsTab(theme),
+          ];
+          const overlay = new WorkflowEditorOverlay({
+            title: "Workflow Editor",
+            tabs,
+            theme,
+            tui,
+            done: handleDone,
+          });
+          sink.overlay = overlay;
+          for (const text of buffered) overlay.showConsolePopup(text);
+          return overlay;
+        } catch (err) {
+          try { stopCapturing(); } catch {}
+          throw err;
+        }
       }, {
         ...OVERLAY_OPTIONS,
         onHandle: () => sink.overlay?.bringConsolePopupToFront(),

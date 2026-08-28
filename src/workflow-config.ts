@@ -82,16 +82,20 @@ export function isNumericString(value: unknown): value is string {
   return typeof value === "string" && /^\d+$/.test(value);
 }
 
+function isValidIntInRange(value: unknown, min: number, max: number): boolean {
+  return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
+}
+
 export function isValidTimeout(value: unknown): boolean {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1000 && value <= 600000;
+  return isValidIntInRange(value, 1000, 600000);
 }
 
 export function isValidRetries(value: unknown): boolean {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 3;
+  return isValidIntInRange(value, 1, 3);
 }
 
 export function isValidStopAfterEmpty(value: unknown): boolean {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= MAX_ROUNDS;
+  return isValidIntInRange(value, 1, MAX_ROUNDS);
 }
 
 function isStepForAllowedActions(value: unknown, allowed: string[], checkOnlyIfChanges: boolean): boolean {
