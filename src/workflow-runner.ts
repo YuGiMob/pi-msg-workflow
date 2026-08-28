@@ -2,10 +2,10 @@ import type { ExecResult, ExtensionAPI, ExtensionCommandContext, SessionEntry } 
 import { getMessages } from "./messages.js";
 import { getCommands } from "./commands.js";
 import { errorMessage } from "./errors.js";
-import { countLeadingPhaseMatches, countPhaseMatches, countUserTextMatches, findAnchorAfterMessage, lastAssistantMessageText } from "./session-helpers.js";
+import { countPhaseMatches, countUserTextMatches, findAnchorAfterMessage, lastAssistantMessageText } from "./session-helpers.js";
 import { runCommand, commandFailureMessage } from "./command-runner.js";
 import { runCommit, commitFailureMessage } from "./commit.js";
-import { findWorkflowCycle, getWorkflowConfig, loopSections, missingReferences, type WorkflowConfig, type StartStep } from "./workflow-config.js";
+import { getWorkflowConfig, getWorkflowRunError, loopSections, type WorkflowConfig, type StartStep } from "./workflow-config.js";
 
 const SEND_START_TIMEOUT_MS = 5000;
 const SEND_MAX_ATTEMPTS = 3;
@@ -18,7 +18,6 @@ const workflowLabels: string[] = [];
 
 export type WorkflowVars = Record<string, string>;
 
-const WORKFLOW_VARS_PATTERN = /\{.*\}\s*$/s;
 const INTERPOLATION_PATTERN = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
 
 export function interpolateText(text: string, vars: Record<string, string>): string {
@@ -26,33 +25,42 @@ export function interpolateText(text: string, vars: Record<string, string>): str
   return text.replace(INTERPOLATION_PATTERN, (match, key) => vars[key] !== undefined ? vars[key] : match);
 }
 
-export function parseWorkflowArgs(raw: string): Record<string, string> {
-  return extractWorkflowVars(raw).vars;
+export function extractWorkflowVars(raw: string): { vars: Record<string, string>; warning?: string } {
+  for (let start = raw.lastIndexOf("{"); start !== -1; start = raw.lastIndexOf("{", start - 1)) {
+    const jsonText = raw.slice(start).trim();
+    if (!jsonText.endsWith("}")) continue;
+    try {
+      const parsed = JSON.parse(jsonText);
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return { vars: {}, warning: `Invalid workflow vars JSON: ${jsonText.slice(0, 80)}` };
+      }
+      const vars: Record<string, string> = {};
+      const ignored: string[] = [];
+      for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof v === "string") vars[k] = v;
+        else if (typeof v === "number" || typeof v === "boolean") vars[k] = String(v);
+        else ignored.push(k);
+      }
+      if (ignored.length > 0) {
+        return { vars, warning: `Workflow vars ignored: non-string values for ${ignored.join(", ")} in ${jsonText.slice(0, 80)}` };
+      }
+      return { vars };
+    } catch {
+      continue;
+    }
+  }
+  const candidateStart = raw.lastIndexOf("{");
+  if (candidateStart !== -1) {
+    const candidate = raw.slice(candidateStart).trim();
+    if (candidate.endsWith("}")) {
+      return { vars: {}, warning: `Invalid workflow vars JSON: ${candidate.slice(0, 80)}` };
+    }
+  }
+  return { vars: {} };
 }
 
-export function extractWorkflowVars(raw: string): { vars: Record<string, string>; warning?: string } {
-  const match = raw.match(WORKFLOW_VARS_PATTERN);
-  if (match === null) return { vars: {} };
-  const jsonText = match[0].trim();
-  try {
-    const parsed = JSON.parse(jsonText);
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { vars: {}, warning: `Invalid workflow vars JSON: ${jsonText.slice(0, 80)}` };
-    }
-    const vars: Record<string, string> = {};
-    const ignored: string[] = [];
-    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof v === "string") vars[k] = v;
-      else if (typeof v === "number" || typeof v === "boolean") vars[k] = String(v);
-      else ignored.push(k);
-    }
-    if (ignored.length > 0) {
-      return { vars, warning: `Workflow vars ignored: non-string values for ${ignored.join(", ")} in ${jsonText.slice(0, 80)}` };
-    }
-    return { vars };
-  } catch {
-    return { vars: {}, warning: `Invalid workflow vars JSON: ${jsonText.slice(0, 80)}` };
-  }
+export function parseWorkflowArgs(raw: string): Record<string, string> {
+  return extractWorkflowVars(raw).vars;
 }
 
 async function withStepTimeout<T>(promise: Promise<T>, timeout: number | undefined, ctx: ExtensionCommandContext, scope: string): Promise<T | null> {
@@ -72,11 +80,6 @@ async function withStepTimeout<T>(promise: Promise<T>, timeout: number | undefin
   return raced as T | null;
 }
 
-async function awaitWithTimeout<T>(promise: Promise<T>, timeout: number | undefined, ctx: ExtensionCommandContext, scope: string): Promise<T | null> {
-  if (timeout === undefined) return await promise;
-  return withStepTimeout(promise, timeout, ctx, scope);
-}
-
 function workflowChain(): string {
   return workflowLabels.join(" → ");
 }
@@ -94,10 +97,15 @@ export function isWorkflowRunning(): boolean {
   return workflowRunning;
 }
 
+export function tryStartWorkflow(): boolean {
+  if (workflowRunning) return false;
+  workflowRunning = true;
+  return true;
+}
+
 export function requestWorkflowStop(): void {
   workflowStopRequested = true;
 }
-
 export function notifyMissingEntry(
   ctx: ExtensionCommandContext,
   noun: string,
@@ -233,7 +241,7 @@ async function runStoredCommand(
   }
   const command = interpolateText(raw, vars);
   const task = runCommand(pi, command, `${prefix}${command}...`, ctx.ui);
-  const result = await awaitWithTimeout(task, timeout, ctx, scope);
+  const result = await withStepTimeout(task, timeout, ctx, scope);
   if (result === null) return false;
   if (!result.ok) {
     ctx.ui.notify(commandFailureMessage(num, result), "error");
@@ -244,7 +252,7 @@ async function runStoredCommand(
 
 async function runCommitStep(pi: ExtensionAPI, ctx: ExtensionCommandContext, timeout: number | undefined, scope = ""): Promise<boolean> {
   const task = runCommit(pi, ctx.ui, lastAssistantMessageText(ctx.sessionManager.getBranch()), withWorkflowChain(`${scope}Committing changes...`));
-  const result = await awaitWithTimeout(task, timeout, ctx, scope);
+  const result = await withStepTimeout(task, timeout, ctx, scope);
   if (result === null) return false;
   if (!result.ok) {
     ctx.ui.notify(commitFailureMessage(result), "error");
@@ -271,7 +279,7 @@ async function sendStoredMessage(
   const text = interpolateText(raw, vars);
   ctx.ui.setWorkingMessage(workingText);
   const task = sendAndWaitForTurn(pi, ctx, text);
-  const result = await awaitWithTimeout(task, timeout, ctx, scope);
+  const result = await withStepTimeout(task, timeout, ctx, scope);
   if (result === null) {
     ctx.ui.setWorkingMessage();
     return false;
@@ -347,7 +355,7 @@ async function runPhases(
             const root = roots[0];
             if (root !== undefined) {
               const navigateTask = ctx.navigateTree(root.entry.id, { summarize: false });
-              const result = await awaitWithTimeout(navigateTask, step.timeout, ctx, scope);
+              const result = await withStepTimeout(navigateTask, step.timeout, ctx, scope);
               if (result === null) {
                 ctx.ui.setWorkingMessage();
                 return false;
@@ -363,7 +371,7 @@ async function runPhases(
           }
           ctx.ui.setWorkingMessage(withWorkflowChain(`${scope}resetting context to message ${step.tree}...`));
           const task = navigateToMessageAnchor(ctx, step.tree, false, vars);
-          const status = await awaitWithTimeout(task, step.timeout, ctx, scope);
+          const status = await withStepTimeout(task, step.timeout, ctx, scope);
           if (status === null) {
             ctx.ui.setWorkingMessage();
             return false;
@@ -412,9 +420,7 @@ async function runWorkflowPhases(
     }
     return [];
   });
-  const matched = leading
-    ? countLeadingPhaseMatches(ctx.sessionManager.getBranch(), startMsgs)
-    : countPhaseMatches(ctx.sessionManager.getBranch(), startMsgs);
+  const matched = countPhaseMatches(ctx.sessionManager.getBranch(), startMsgs, leading);
   const ok = await runPhases(pi, ctx, config, index, rounds, matched, vars);
   if (!ok && config.finallyOnError && !workflowStopRequested) {
     await runOncePhase(pi, ctx, config.finally, 0, vars);
@@ -432,35 +438,16 @@ async function runSubWorkflow(pi: ExtensionAPI, ctx: ExtensionCommandContext, in
     notifyMissingEntry(ctx, "Workflow", index, "Use /workflow-edit and press w to create it.", "error");
     return false;
   }
-  const messages = getMessages();
-  const commands = getCommands();
-  const { messages: missing, commands: missingCommands, workflows: missingWorkflows } = missingReferences(config, messages, commands, workflows);
-  if (missing.length > 0) {
-    ctx.ui.notify(`Missing messages in messages.json: ${missing.join(", ")}. Restore the default stores with /workflow-reset or add them with /change-msg.`, "error");
-    return false;
-  }
-  if (missingCommands.length > 0) {
-    ctx.ui.notify(`Missing commands in commands.json: ${missingCommands.join(", ")}. Restore the default stores with /workflow-reset or add them with /change-cmd.`, "error");
-    return false;
-  }
-  if (missingWorkflows.length > 0) {
-    ctx.ui.notify(`Missing workflows in workflow.json: ${missingWorkflows.join(", ")}. Create them with /workflow-edit (press w).`, "error");
-    return false;
-  }
-  const cycle = findWorkflowCycle(workflows, index);
-  if (cycle !== null) {
-    ctx.ui.notify(`Circular workflow reference: ${cycle.join(" → ")}. Fix workflow.json first.`, "error");
-    return false;
-  }
-  if (loopSections(config).some((section) => section.length === 0 || section[0]!.tree === undefined)) {
-    ctx.ui.notify("The first step of every loop section must be a tree step (context reset)", "error");
+  const runError = getWorkflowRunError(config, getMessages(), getCommands(), workflows, index);
+  if (runError !== null) {
+    ctx.ui.notify(runError, "error");
     return false;
   }
   workflowStack.push(index);
   workflowLabels.push(`Workflow ${index}`);
   try {
     const task = runWorkflowPhases(pi, ctx, config, index, config.rounds, getMessages(), false, vars);
-    const result = await awaitWithTimeout(task, timeout, ctx, scope);
+    const result = await withStepTimeout(task, timeout, ctx, scope);
     if (result === null) return false;
     return result;
   } finally {
@@ -478,7 +465,10 @@ export async function runWorkflow(
   messages: Record<string, string>,
   vars: Record<string, string> = {},
 ): Promise<void> {
-  workflowRunning = true;
+  if (!tryStartWorkflow()) {
+    ctx.ui.notify("A workflow is already running. Use /workflow-stop to cancel it", "warning");
+    return;
+  }
   workflowStopRequested = false;
   workflowStack.length = 0;
   workflowStack.push(index);

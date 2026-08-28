@@ -41,12 +41,12 @@ function countMatches(entries: SessionEntry[], expected: string[], leadingOnly: 
   return matched;
 }
 
-export function countLeadingPhaseMatches(entries: SessionEntry[], expected: string[]): number {
-  return countMatches(entries, expected, true);
+export function countPhaseMatches(entries: SessionEntry[], expected: string[], leading = false): number {
+  return countMatches(entries, expected, leading);
 }
 
-export function countPhaseMatches(entries: SessionEntry[], expected: string[]): number {
-  return countMatches(entries, expected, false);
+export function countLeadingPhaseMatches(entries: SessionEntry[], expected: string[]): number {
+  return countPhaseMatches(entries, expected, true);
 }
 
 function lastNonUserMessage(entries: SessionEntry[], from: number, to: number): SessionEntry | undefined {

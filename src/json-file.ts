@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 export function readJsonFile(file: string): unknown | null {
@@ -26,7 +26,23 @@ export function writeJsonAtomic(file: string, value: unknown): void {
   try {
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(tmp, JSON.stringify(value, null, 2), "utf-8");
+    try {
+      const fd = openSync(tmp, "r");
+      try {
+        fsyncSync(fd);
+      } finally {
+        closeSync(fd);
+      }
+    } catch {}
     renameSync(tmp, file);
+    try {
+      const dirFd = openSync(dirname(file), "r");
+      try {
+        fsyncSync(dirFd);
+      } finally {
+        closeSync(dirFd);
+      }
+    } catch {}
   } catch (err) {
     try {
       unlinkSync(tmp);

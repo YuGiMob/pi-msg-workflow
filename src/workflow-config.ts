@@ -341,3 +341,36 @@ export function missingReferences(
     workflows: referencedWorkflows(config).filter((num) => !workflows[num]),
   };
 }
+
+export function getWorkflowIssues(
+  config: WorkflowConfig,
+  messages: Record<string, string>,
+  commands: Record<string, string>,
+  workflows: Record<string, WorkflowConfig>,
+  index: string,
+): { missingMessages: string[]; missingCommands: string[]; missingWorkflows: string[]; cycle: string[] | null; hasBadSection: boolean } {
+  const { messages: missingMessages, commands: missingCommands, workflows: missingWorkflows } = missingReferences(config, messages, commands, workflows);
+  return {
+    missingMessages,
+    missingCommands,
+    missingWorkflows,
+    cycle: findWorkflowCycle(workflows, index),
+    hasBadSection: loopSections(config).some((section) => section.length === 0 || section[0]!.tree === undefined),
+  };
+}
+
+export function getWorkflowRunError(
+  config: WorkflowConfig,
+  messages: Record<string, string>,
+  commands: Record<string, string>,
+  workflows: Record<string, WorkflowConfig>,
+  index: string,
+): string | null {
+  const issues = getWorkflowIssues(config, messages, commands, workflows, index);
+  if (issues.missingMessages.length > 0) return `Missing messages in messages.json: ${issues.missingMessages.join(", ")}. Restore the default stores with /workflow-reset or add them with /change-msg.`;
+  if (issues.missingCommands.length > 0) return `Missing commands in commands.json: ${issues.missingCommands.join(", ")}. Restore the default stores with /workflow-reset or add them with /change-cmd.`;
+  if (issues.missingWorkflows.length > 0) return `Missing workflows in workflow.json: ${issues.missingWorkflows.join(", ")}. Create them with /workflow-edit (press w).`;
+  if (issues.cycle !== null) return `Circular workflow reference: ${issues.cycle.join(" → ")}. Fix workflow.json first.`;
+  if (issues.hasBadSection) return `The first step of every loop section must be a tree step (context reset)`;
+  return null;
+}

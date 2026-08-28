@@ -3,7 +3,7 @@ import { Key, decodeKittyPrintable, matchesKey, visibleWidth, type OverlayHandle
 import { getMessages, setMessages } from "./messages.js";
 import { getCommands, setCommands } from "./commands.js";
 import { MAX_ROUNDS, MAX_LOOP_SECTIONS } from "./constants.js";
-import { getWorkflows, getWorkflowConfig, setWorkflowConfig, deleteWorkflowConfig, missingReferences, referencedIndices, referencedCommands, referencedWorkflows, findWorkflowCycle, loopSections, totalLoopSteps, isNumericString, type LoopStep, type WorkflowConfig } from "./workflow-config.js";
+import { getWorkflows, getWorkflowConfig, getWorkflowIssues, setWorkflowConfig, deleteWorkflowConfig, referencedIndices, referencedCommands, referencedWorkflows, loopSections, totalLoopSteps, isNumericString, type LoopStep, type WorkflowConfig } from "./workflow-config.js";
 import { compareNumericKeys } from "./json-file.js";
 import { errorMessage } from "./errors.js";
 
@@ -809,22 +809,26 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
       (config as unknown as Record<string, unknown>)[`loop${i + 2}`] = [{ tree: section.tree, ...(section.treeTimeout !== undefined ? { timeout: section.treeTimeout } : {}) }, ...section.loop.map((step) => ({ ...step }))];
     }
     const { workflows } = getWorkflows();
-    const { messages, commands, workflows: missingWorkflows } = missingReferences(config, getMessages(), getCommands(), workflows);
-    if (messages.length > 0) {
-      this.setFlash(`Missing messages: ${messages.join(", ")}. Add and save them in the Messages tab first.`);
+    const nextWorkflows = { ...workflows, [this.index]: config };
+    const issues = getWorkflowIssues(config, getMessages(), getCommands(), nextWorkflows, this.index);
+    if (issues.missingMessages.length > 0) {
+      this.setFlash(`Missing messages: ${issues.missingMessages.join(", ")}. Add and save them in the Messages tab first.`);
       return;
     }
-    if (commands.length > 0) {
-      this.setFlash(`Missing commands: ${commands.join(", ")}. Add and save them in the Commands tab first.`);
+    if (issues.missingCommands.length > 0) {
+      this.setFlash(`Missing commands: ${issues.missingCommands.join(", ")}. Add and save them in the Commands tab first.`);
       return;
     }
-    if (missingWorkflows.length > 0) {
-      this.setFlash(`Missing workflows: ${missingWorkflows.join(", ")}. Create and save them first (press w to switch).`);
+    if (issues.missingWorkflows.length > 0) {
+      this.setFlash(`Missing workflows: ${issues.missingWorkflows.join(", ")}. Create and save them first (press w to switch).`);
       return;
     }
-    const cycle = findWorkflowCycle(workflows, this.index);
-    if (cycle !== null) {
-      this.setFlash(`Circular workflow reference: ${cycle.join(" → ")}. Break the cycle in the referenced workflow first.`);
+    if (issues.cycle !== null) {
+      this.setFlash(`Circular workflow reference: ${issues.cycle.join(" → ")}. Break the cycle in the referenced workflow first.`);
+      return;
+    }
+    if (issues.hasBadSection) {
+      this.setFlash(`The first step of every loop section must be a tree step (context reset)`);
       return;
     }
     try {
