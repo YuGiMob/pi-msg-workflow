@@ -11,6 +11,11 @@ const SEND_START_TIMEOUT_MS = 5000;
 const SEND_MAX_ATTEMPTS = 3;
 const SEND_POLL_INTERVAL_MS = 25;
 const RETRY_DELAY_MS = 400;
+const RETRY_MAX_DELAY_MS = 5000;
+
+function retryDelay(attempt: number): number {
+  return Math.min(RETRY_DELAY_MS * 2 ** (attempt - 1), RETRY_MAX_DELAY_MS);
+}
 let workflowStopRequested = false;
 let workflowRunning = false;
 const workflowStack: string[] = [];
@@ -122,7 +127,7 @@ async function delayWithStopCheck(ms: number): Promise<boolean> {
 }
 async function notifyRetry(ctx: ExtensionCommandContext, scope: string, message: string, attempt: number): Promise<boolean> {
   ctx.ui.notify(withWorkflowChain(`${scope}${message}`), "warning");
-  return delayWithStopCheck(RETRY_DELAY_MS * attempt);
+  return delayWithStopCheck(retryDelay(attempt));
 }
 async function retryWithTimeout<T>(ctx: ExtensionCommandContext, scope: string, retries: number, timeout: number | undefined, task: () => Promise<T>, isSuccess: (result: T) => boolean, isRetryable: (result: T | null) => boolean, retryMessage: (result: T | null, attempt: number, retries: number) => string): Promise<T | null> {
   for (let attempt = 1; attempt <= retries; attempt++) {
