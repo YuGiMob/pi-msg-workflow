@@ -10,7 +10,7 @@ import { resetUserData } from "./src/user-data.js";
 import { WorkflowEditorOverlay, WorkflowTab, MessagesTab, CommandsTab, MAX_OVERLAY_HEIGHT_RATIO, type EditorTab } from "./src/workflow-editor.js";
 import { errorMessage } from "./src/errors.js";
 import { captureConsoleMessages } from "./src/console-capture.js";
-import { isWorkflowRunning, requestWorkflowStop, runWorkflow, notifyMissingEntry, navigateToMessageAnchor, notifyNavigationStatus } from "./src/workflow-runner.js";
+import { isWorkflowRunning, requestWorkflowStop, runWorkflow, notifyMissingEntry, navigateToMessageAnchor, notifyNavigationStatus, extractWorkflowVars, interpolateText } from "./src/workflow-runner.js";
 
 const OVERLAY_OPTIONS = {
   overlay: true,
@@ -27,17 +27,23 @@ function clip(text: string | undefined, max: number): string {
   return text.length > max ? `${text.substring(0, max)}...` : text;
 }
 
-function describeStep(step: LoopStep, messages: Record<string, string>, commands: Record<string, string>, workflows: Record<string, WorkflowConfig>): string {
-  const suffix = step.onlyIfChanges ? " (if-changes)" : "";
-  if (step.msg !== undefined) return `msg ${step.msg}${suffix}: ${clip(messages[step.msg], 50)}`;
-  if (step.cmd !== undefined) return `cmd ${step.cmd}${suffix}: ${clip(commands[step.cmd], 50)}`;
+function describeStep(step: LoopStep, messages: Record<string, string>, commands: Record<string, string>, workflows: Record<string, WorkflowConfig>, vars: Record<string, string> = {}): string {
+  const suffix = `${step.onlyIfChanges ? " (if-changes)" : ""}${step.timeout !== undefined ? ` (timeout ${step.timeout}ms)` : ""}`;
+  if (step.msg !== undefined) {
+    const raw = messages[step.msg];
+    return `msg ${step.msg}${suffix}: ${clip(raw === undefined ? undefined : interpolateText(raw, vars), 50)}`;
+  }
+  if (step.cmd !== undefined) {
+    const raw = commands[step.cmd];
+    return `cmd ${step.cmd}${suffix}: ${clip(raw === undefined ? undefined : interpolateText(raw, vars), 50)}`;
+  }
   if (step.workflow !== undefined) {
     const config = workflows[step.workflow];
     return `wf ${step.workflow}${suffix}: ${config === undefined ? "(missing)" : `${config.rounds} round${config.rounds === 1 ? "" : "s"} (${config.start.length} start, ${totalLoopSteps(config)} loop, ${config.finally.length} finally)`}`;
   }
-  if (step.commit === true) return "commit: stage and commit all changes";
-  if (step.tree === "0") return "tree 0: new session";
-  return `tree ${step.tree!}`;
+  if (step.commit === true) return `commit: stage and commit all changes${suffix}`;
+  if (step.tree === "0") return `tree 0: new session${suffix}`;
+  return `tree ${step.tree!}${suffix}`;
 }
 function storeCompletions(store: Record<string, string>, noun: string, prefix: string): AutocompleteItem[] {
   return Object.keys(store)
@@ -306,6 +312,9 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       const dryRun = tokens.some((token) => token === "dry" || token === "--dry-run");
+      const extracted = extractWorkflowVars(args);
+      const vars = extracted.vars;
+      if (extracted.warning !== undefined) ctx.ui.notify(extracted.warning, "warning");
       if (!dryRun && isWorkflowRunning()) {
         ctx.ui.notify("A workflow is already running. Use /workflow-stop to cancel it", "warning");
         return;
@@ -350,12 +359,13 @@ export default function (pi: ExtensionAPI) {
       const rounds = numeric[1] === undefined ? config.rounds : parseRounds(numeric[1], config.rounds);
       if (dryRun) {
         const describeSteps = (steps: StartStep[] | LoopStep[]) =>
-          steps.length > 0 ? steps.map((step) => describeStep(step, messages, commands, workflows)).join(", ") : "(none)";
+          steps.length > 0 ? steps.map((step) => describeStep(step, messages, commands, workflows, vars)).join(", ") : "(none)";
         const loopLines = loopSections(config).map((section, i) => `loop${i === 0 ? "" : ` ${i + 1}`}: ${describeSteps(section)}`).join("\n");
-        ctx.ui.notify(`[pi-msg-workflow] Dry run: Workflow ${index}, ${rounds} round${rounds === 1 ? "" : "s"}\nstart: ${describeSteps(config.start)}\n${loopLines}\nfinally: ${describeSteps(config.finally)}`, "info");
+        const varsLine = Object.keys(vars).length > 0 ? `\nvars: ${JSON.stringify(vars)}` : "";
+        ctx.ui.notify(`[pi-msg-workflow] Dry run: Workflow ${index}, ${rounds} round${rounds === 1 ? "" : "s"}${varsLine}\nstart: ${describeSteps(config.start)}\n${loopLines}\nfinally: ${describeSteps(config.finally)}`, "info");
         return;
       }
-      await runWorkflow(pi, ctx, config, index, rounds, messages);
+      await runWorkflow(pi, ctx, config, index, rounds, messages, vars);
     },
   });
 }

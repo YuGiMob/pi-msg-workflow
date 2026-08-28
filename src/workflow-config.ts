@@ -10,6 +10,7 @@ export interface LoopStep {
   workflow?: string;
   commit?: boolean;
   onlyIfChanges?: boolean;
+  timeout?: number;
 }
 
 export interface StartStep {
@@ -17,6 +18,7 @@ export interface StartStep {
   cmd?: string;
   workflow?: string;
   commit?: boolean;
+  timeout?: number;
 }
 
 export interface WorkflowConfig {
@@ -67,7 +69,7 @@ function defaultConfig(): WorkflowConfig {
 function stepAction(value: unknown): { action: string; content: unknown; step: Record<string, unknown> } | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const step = value as Record<string, unknown>;
-  const keys = Object.keys(step).filter((key) => key !== "onlyIfChanges");
+  const keys = Object.keys(step).filter((key) => key !== "onlyIfChanges" && key !== "timeout");
   if (keys.length !== 1) return null;
   const action = keys[0]!;
   return { action, content: step[action], step };
@@ -77,9 +79,14 @@ export function isNumericString(value: unknown): value is string {
   return typeof value === "string" && /^\d+$/.test(value);
 }
 
+function isValidTimeout(value: unknown): boolean {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1000 && value <= 600000;
+}
+
 function isStepForAllowedActions(value: unknown, allowed: string[], checkOnlyIfChanges: boolean): boolean {
   const entry = stepAction(value);
   if (entry === null) return false;
+  if ("timeout" in entry.step && !isValidTimeout(entry.step.timeout)) return false;
   if (entry.action === "commit") return entry.content === true && (!checkOnlyIfChanges || !("onlyIfChanges" in entry.step));
   if (!allowed.includes(entry.action)) return false;
   if (!isNumericString(entry.content)) return false;

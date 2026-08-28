@@ -16,6 +16,67 @@ let workflowRunning = false;
 const workflowStack: string[] = [];
 const workflowLabels: string[] = [];
 
+export type WorkflowVars = Record<string, string>;
+
+const WORKFLOW_VARS_PATTERN = /\{.*\}\s*$/s;
+const INTERPOLATION_PATTERN = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
+
+export function interpolateText(text: string, vars: Record<string, string>): string {
+  if (Object.keys(vars).length === 0) return text;
+  return text.replace(INTERPOLATION_PATTERN, (match, key) => vars[key] !== undefined ? vars[key] : match);
+}
+
+export function parseWorkflowArgs(raw: string): Record<string, string> {
+  return extractWorkflowVars(raw).vars;
+}
+
+export function extractWorkflowVars(raw: string): { vars: Record<string, string>; warning?: string } {
+  const match = raw.match(WORKFLOW_VARS_PATTERN);
+  if (match === null) return { vars: {} };
+  const jsonText = match[0].trim();
+  try {
+    const parsed = JSON.parse(jsonText);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { vars: {}, warning: `Invalid workflow vars JSON: ${jsonText.slice(0, 80)}` };
+    }
+    const vars: Record<string, string> = {};
+    const ignored: string[] = [];
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === "string") vars[k] = v;
+      else if (typeof v === "number" || typeof v === "boolean") vars[k] = String(v);
+      else ignored.push(k);
+    }
+    if (ignored.length > 0) {
+      return { vars, warning: `Workflow vars ignored: non-string values for ${ignored.join(", ")} in ${jsonText.slice(0, 80)}` };
+    }
+    return { vars };
+  } catch {
+    return { vars: {}, warning: `Invalid workflow vars JSON: ${jsonText.slice(0, 80)}` };
+  }
+}
+
+async function withStepTimeout<T>(promise: Promise<T>, timeout: number | undefined, ctx: ExtensionCommandContext, scope: string): Promise<T | null> {
+  if (timeout === undefined) return await promise;
+  const snapshot = workflowChain();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<null>((resolve) => {
+    timer = setTimeout(() => {
+      const prefix = snapshot !== "" ? `${snapshot}: ` : workflowLabels.length > 1 ? `${workflowChain()}: ` : "";
+      ctx.ui.notify(`${prefix}${scope}step timed out after ${timeout}ms`, "error");
+      resolve(null);
+    }, timeout);
+  });
+  promise.catch(() => {});
+  const raced = await Promise.race([promise, timeoutPromise]);
+  if (timer !== undefined) clearTimeout(timer);
+  return raced as T | null;
+}
+
+async function awaitWithTimeout<T>(promise: Promise<T>, timeout: number | undefined, ctx: ExtensionCommandContext, scope: string): Promise<T | null> {
+  if (timeout === undefined) return await promise;
+  return withStepTimeout(promise, timeout, ctx, scope);
+}
+
 function workflowChain(): string {
   return workflowLabels.join(" → ");
 }
@@ -90,9 +151,10 @@ async function sendAndWaitForTurn(
 
 type TreeNavigationStatus = "ok" | "missing" | "not-found" | "cancelled" | "failed" | "fallback";
 
-export async function navigateToMessageAnchor(ctx: ExtensionCommandContext, index: string, requirePresence = false): Promise<TreeNavigationStatus> {
-  const text = getMessages()[index];
-  if (!text) return "missing";
+export async function navigateToMessageAnchor(ctx: ExtensionCommandContext, index: string, requirePresence = false, vars: Record<string, string> = {}): Promise<TreeNavigationStatus> {
+  const raw = getMessages()[index];
+  if (!raw) return "missing";
+  const text = interpolateText(raw, vars);
   const present = countUserTextMatches(ctx.sessionManager.getBranch(), text) > 0;
   if (requirePresence && !present) return "not-found";
   const anchor = findAnchorAfterMessage(ctx.sessionManager.getBranch(), text);
@@ -160,13 +222,19 @@ async function runStoredCommand(
   ctx: ExtensionCommandContext,
   num: string,
   prefix: string,
+  vars: Record<string, string> = {},
+  timeout?: number,
+  scope: string = "",
 ): Promise<boolean> {
-  const command = getCommands()[num];
-  if (!command) {
+  const raw = getCommands()[num];
+  if (!raw) {
     notifyMissingEntry(ctx, "Command", num, undefined, "error");
     return false;
   }
-  const result = await runCommand(pi, command, `${prefix}${command}...`, ctx.ui);
+  const command = interpolateText(raw, vars);
+  const task = runCommand(pi, command, `${prefix}${command}...`, ctx.ui);
+  const result = await awaitWithTimeout(task, timeout, ctx, scope);
+  if (result === null) return false;
   if (!result.ok) {
     ctx.ui.notify(commandFailureMessage(num, result), "error");
     return false;
@@ -174,8 +242,10 @@ async function runStoredCommand(
   return true;
 }
 
-async function runCommitStep(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<boolean> {
-  const result = await runCommit(pi, ctx.ui, lastAssistantMessageText(ctx.sessionManager.getBranch()), withWorkflowChain("Committing changes..."));
+async function runCommitStep(pi: ExtensionAPI, ctx: ExtensionCommandContext, timeout: number | undefined, scope = ""): Promise<boolean> {
+  const task = runCommit(pi, ctx.ui, lastAssistantMessageText(ctx.sessionManager.getBranch()), withWorkflowChain(`${scope}Committing changes...`));
+  const result = await awaitWithTimeout(task, timeout, ctx, scope);
+  if (result === null) return false;
   if (!result.ok) {
     ctx.ui.notify(commitFailureMessage(result), "error");
     return false;
@@ -189,14 +259,23 @@ async function sendStoredMessage(
   ctx: ExtensionCommandContext,
   num: string,
   workingText: string,
+  vars: Record<string, string> = {},
+  timeout?: number,
+  scope: string = "",
 ): Promise<boolean> {
-  const text = getMessages()[num];
-  if (text === undefined) {
+  const raw = getMessages()[num];
+  if (raw === undefined) {
     notifyMissingEntry(ctx, "Message", num, undefined, "error");
     return false;
   }
+  const text = interpolateText(raw, vars);
   ctx.ui.setWorkingMessage(workingText);
-  const result = await sendAndWaitForTurn(pi, ctx, text);
+  const task = sendAndWaitForTurn(pi, ctx, text);
+  const result = await awaitWithTimeout(task, timeout, ctx, scope);
+  if (result === null) {
+    ctx.ui.setWorkingMessage();
+    return false;
+  }
   if (result === "cancelled") {
     ctx.ui.notify("Workflow stopped", "info");
     return false;
@@ -213,6 +292,7 @@ async function runOncePhase(
   ctx: ExtensionCommandContext,
   steps: StartStep[],
   skipMsgs: number,
+  vars: Record<string, string> = {},
 ): Promise<boolean> {
   let skipped = 0;
   for (const step of steps) {
@@ -225,13 +305,14 @@ async function runOncePhase(
         skipped++;
         continue;
       }
-      if (!(await sendStoredMessage(pi, ctx, step.msg, withWorkflowChain(`Sending message ${step.msg}...`)))) return false;
+      const working = withWorkflowChain(`Sending message ${step.msg}...`);
+      if (!(await sendStoredMessage(pi, ctx, step.msg, working, vars, step.timeout, ""))) return false;
     } else if (step.cmd !== undefined) {
-      if (!(await runStoredCommand(pi, ctx, step.cmd, withWorkflowChain("Running ")))) return false;
+      if (!(await runStoredCommand(pi, ctx, step.cmd, withWorkflowChain("Running "), vars, step.timeout, ""))) return false;
     } else if (step.workflow !== undefined) {
-      if (!(await runSubWorkflow(pi, ctx, step.workflow))) return false;
+      if (!(await runSubWorkflow(pi, ctx, step.workflow, vars, step.timeout, ""))) return false;
     } else if (step.commit === true) {
-      if (!(await runCommitStep(pi, ctx))) return false;
+      if (!(await runCommitStep(pi, ctx, step.timeout, ""))) return false;
     }
   }
   return true;
@@ -244,8 +325,9 @@ async function runPhases(
   index: string,
   rounds: number,
   matched: number,
+  vars: Record<string, string> = {},
 ): Promise<boolean> {
-  if (!(await runOncePhase(pi, ctx, config.start, matched))) return false;
+  if (!(await runOncePhase(pi, ctx, config.start, matched, vars))) return false;
   const sections = loopSections(config);
   for (let s = 0; s < sections.length; s++) {
     const section = sections[s]!;
@@ -264,18 +346,31 @@ async function runPhases(
             const roots = ctx.sessionManager.getTree();
             const root = roots[0];
             if (root !== undefined) {
-              const result = await ctx.navigateTree(root.entry.id, { summarize: false });
+              const navigateTask = ctx.navigateTree(root.entry.id, { summarize: false });
+              const result = await awaitWithTimeout(navigateTask, step.timeout, ctx, scope);
+              if (result === null) {
+                ctx.ui.setWorkingMessage();
+                return false;
+              }
               if (result.cancelled) {
                 ctx.ui.notify("Workflow cancelled", "warning");
                 return false;
               }
             }
             ctx.ui.notify("New session started", "info");
+            ctx.ui.setWorkingMessage();
             continue;
           }
           ctx.ui.setWorkingMessage(withWorkflowChain(`${scope}resetting context to message ${step.tree}...`));
-          const status = await navigateToMessageAnchor(ctx, step.tree);
-          if (!notifyNavigationStatus(ctx, step.tree, status, "Workflow cancelled", "error")) return false;
+          const task = navigateToMessageAnchor(ctx, step.tree, false, vars);
+          const status = await awaitWithTimeout(task, step.timeout, ctx, scope);
+          if (status === null) {
+            ctx.ui.setWorkingMessage();
+            return false;
+          }
+          const navigated = notifyNavigationStatus(ctx, step.tree, status as TreeNavigationStatus, "Workflow cancelled", "error");
+          ctx.ui.setWorkingMessage();
+          if (!navigated) return false;
           continue;
         }
         if (step.onlyIfChanges) {
@@ -284,19 +379,19 @@ async function runPhases(
           if (!changed) continue;
         }
         if (step.workflow !== undefined) {
-          if (!(await runSubWorkflow(pi, ctx, step.workflow))) return false;
+          if (!(await runSubWorkflow(pi, ctx, step.workflow, vars, step.timeout, scope))) return false;
         } else if (step.cmd !== undefined) {
-          if (!(await runStoredCommand(pi, ctx, step.cmd, withWorkflowChain(`${scope}running `)))) return false;
+          if (!(await runStoredCommand(pi, ctx, step.cmd, withWorkflowChain(`${scope}running `), vars, step.timeout, scope))) return false;
         } else if (step.msg !== undefined) {
-          if (!(await sendStoredMessage(pi, ctx, step.msg, withWorkflowChain(`${scope}sending message ${step.msg}...`)))) return false;
+          if (!(await sendStoredMessage(pi, ctx, step.msg, withWorkflowChain(`${scope}sending message ${step.msg}...`), vars, step.timeout, scope))) return false;
         } else if (step.commit === true) {
-          if (!(await runCommitStep(pi, ctx))) return false;
+          if (!(await runCommitStep(pi, ctx, step.timeout, scope))) return false;
         }
       }
     }
   }
   workflowLabels[workflowLabels.length - 1] = `Workflow ${index}`;
-  if (!(await runOncePhase(pi, ctx, config.finally, 0))) return false;
+  if (!(await runOncePhase(pi, ctx, config.finally, 0, vars))) return false;
   return true;
 }
 
@@ -308,19 +403,26 @@ async function runWorkflowPhases(
   rounds: number,
   messages: Record<string, string>,
   leading: boolean,
+  vars: Record<string, string> = {},
 ): Promise<boolean> {
-  const startMsgs = config.start.flatMap((step) => (step.msg !== undefined && messages[step.msg] !== undefined ? [messages[step.msg]!] : []));
+  const startMsgs = config.start.flatMap((step) => {
+    if (step.msg !== undefined && messages[step.msg] !== undefined) {
+      const raw = messages[step.msg]!;
+      return [interpolateText(raw, vars)];
+    }
+    return [];
+  });
   const matched = leading
     ? countLeadingPhaseMatches(ctx.sessionManager.getBranch(), startMsgs)
     : countPhaseMatches(ctx.sessionManager.getBranch(), startMsgs);
-  const ok = await runPhases(pi, ctx, config, index, rounds, matched);
+  const ok = await runPhases(pi, ctx, config, index, rounds, matched, vars);
   if (!ok && config.finallyOnError && !workflowStopRequested) {
-    await runOncePhase(pi, ctx, config.finally, 0);
+    await runOncePhase(pi, ctx, config.finally, 0, vars);
   }
   return ok;
 }
 
-async function runSubWorkflow(pi: ExtensionAPI, ctx: ExtensionCommandContext, index: string): Promise<boolean> {
+async function runSubWorkflow(pi: ExtensionAPI, ctx: ExtensionCommandContext, index: string, vars: Record<string, string> = {}, timeout?: number, scope: string = ""): Promise<boolean> {
   if (workflowStack.includes(index)) {
     ctx.ui.notify(`Circular workflow reference: ${[...workflowStack, index].join(" → ")}`, "error");
     return false;
@@ -357,7 +459,10 @@ async function runSubWorkflow(pi: ExtensionAPI, ctx: ExtensionCommandContext, in
   workflowStack.push(index);
   workflowLabels.push(`Workflow ${index}`);
   try {
-    return await runWorkflowPhases(pi, ctx, config, index, config.rounds, getMessages(), false);
+    const task = runWorkflowPhases(pi, ctx, config, index, config.rounds, getMessages(), false, vars);
+    const result = await awaitWithTimeout(task, timeout, ctx, scope);
+    if (result === null) return false;
+    return result;
   } finally {
     workflowStack.pop();
     workflowLabels.pop();
@@ -371,6 +476,7 @@ export async function runWorkflow(
   index: string,
   rounds: number,
   messages: Record<string, string>,
+  vars: Record<string, string> = {},
 ): Promise<void> {
   workflowRunning = true;
   workflowStopRequested = false;
@@ -381,7 +487,7 @@ export async function runWorkflow(
   try {
     ctx.ui.setWorkingMessage("Waiting for queued messages to complete...");
     await ctx.waitForIdle();
-    const ok = await runWorkflowPhases(pi, ctx, config, index, rounds, messages, true);
+    const ok = await runWorkflowPhases(pi, ctx, config, index, rounds, messages, true, vars);
     if (ok) ctx.ui.notify(`Workflow ${index} complete: ${rounds} round${rounds === 1 ? "" : "s"}`, "info");
   } finally {
     workflowRunning = false;
