@@ -3,7 +3,7 @@ import { Key, decodeKittyPrintable, matchesKey, visibleWidth, type OverlayHandle
 import { getMessages, setMessages } from "./messages.js";
 import { getCommands, setCommands } from "./commands.js";
 import { MAX_ROUNDS, MAX_LOOP_SECTIONS } from "./constants.js";
-import { getWorkflows, getWorkflowConfig, getWorkflowIssues, setWorkflowConfig, deleteWorkflowConfig, referencedIndices, referencedCommands, referencedWorkflows, loopSections, totalLoopSteps, isNumericString, type LoopStep, type WorkflowConfig } from "./workflow-config.js";
+import { getWorkflows, getWorkflowConfig, getWorkflowIssues, setWorkflowConfig, deleteWorkflowConfig, referencedIndices, referencedCommands, referencedWorkflows, loopSections, totalLoopSteps, isNumericString, isValidTimeout, type LoopStep, type WorkflowConfig } from "./workflow-config.js";
 import { compareNumericKeys } from "./json-file.js";
 import { errorMessage } from "./errors.js";
 
@@ -144,6 +144,14 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   return aKeys.every((key, i) => key === bKeys[i] && deepEqual((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]));
 }
 
+function validateTimeoutValue(value: string): string | null {
+  if (value === "") return null;
+  return isNumericString(value) && isValidTimeout(Number(value)) ? null : "Timeout must be 1000-600000 or empty to clear.";
+}
+
+function formatTimeoutPrompt(current: number | undefined): string {
+  return current === undefined ? "timeout ms (1000-600000, empty to clear): " : `timeout ms (current: ${current}, empty to clear): `;
+}
 abstract class BaseEditorTab implements EditorTab {
   abstract readonly name: string;
   abstract readonly footerHints: string;
@@ -761,12 +769,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
   }
   private editTimeout(kind: SelectableKind, section: number, position: number): void {
     if (kind === "tree") {
-      const current = this.sectionTreeTimeout(section);
-      const prompt = current === undefined ? "timeout ms (1000-600000, empty to clear): " : `timeout ms (current: ${current}, empty to clear): `;
-      this.commitInput(prompt, (value) => {
-        if (value === "") return null;
-        return /^\d+$/.test(value) && Number(value) >= 1000 && Number(value) <= 600000 ? null : "Timeout must be 1000-600000 or empty to clear.";
-      }, (value) => {
+      this.commitInput(formatTimeoutPrompt(this.sectionTreeTimeout(section)), validateTimeoutValue, (value) => {
         if (value === "") this.setSectionTreeTimeout(section, undefined);
         else this.setSectionTreeTimeout(section, Number(value));
         this.popup("Timeout updated. Press s to save.");
@@ -775,12 +778,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     }
     const target = kind === "start" ? this.draft.start : kind === "loop" ? this.sectionLoop(section) : this.draft.finally;
     const step = target[position]!;
-    const current = step.timeout;
-    const prompt = current === undefined ? "timeout ms (1000-600000, empty to clear): " : `timeout ms (current: ${current}, empty to clear): `;
-    this.commitInput(prompt, (value) => {
-      if (value === "") return null;
-      return /^\d+$/.test(value) && Number(value) >= 1000 && Number(value) <= 600000 ? null : "Timeout must be 1000-600000 or empty to clear.";
-    }, (value) => {
+    this.commitInput(formatTimeoutPrompt(step.timeout), validateTimeoutValue, (value) => {
       if (value === "") {
         const next = { ...step } as Record<string, unknown>;
         delete next.timeout;

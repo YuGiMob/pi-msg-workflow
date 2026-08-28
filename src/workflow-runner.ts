@@ -25,9 +25,33 @@ export function interpolateText(text: string, vars: Record<string, string>): str
   return text.replace(INTERPOLATION_PATTERN, (match, key) => vars[key] !== undefined ? vars[key] : match);
 }
 
+function resolveStoreText(store: Record<string, string>, noun: string, num: string, vars: Record<string, string>, ctx: ExtensionCommandContext): string | null {
+  const raw = store[num];
+  if (!raw) {
+    notifyMissingEntry(ctx, noun, num, undefined, "error");
+    return null;
+  }
+  return interpolateText(raw, vars);
+}
+
+function resolveMessageText(num: string, vars: Record<string, string>, ctx: ExtensionCommandContext): string | null {
+  return resolveStoreText(getMessages(), "Message", num, vars, ctx);
+}
+
+function resolveCommandText(num: string, vars: Record<string, string>, ctx: ExtensionCommandContext): string | null {
+  return resolveStoreText(getCommands(), "Command", num, vars, ctx);
+}
+
+function hasVarsBoundary(trimmed: string, start: number): boolean {
+  const before = trimmed.slice(0, start);
+  return before.length === 0 || /\s/.test(before[before.length - 1]!);
+}
 export function extractWorkflowVars(raw: string): { vars: Record<string, string>; warning?: string } {
-  for (let start = raw.lastIndexOf("{"); start !== -1; start = raw.lastIndexOf("{", start - 1)) {
-    const jsonText = raw.slice(start).trim();
+  const trimmed = raw.trimEnd();
+  if (!trimmed.endsWith("}")) return { vars: {} };
+  for (let start = trimmed.lastIndexOf("{"); start !== -1; start = trimmed.lastIndexOf("{", start - 1)) {
+    if (!hasVarsBoundary(trimmed, start)) continue;
+    const jsonText = trimmed.slice(start).trim();
     if (!jsonText.endsWith("}")) continue;
     try {
       const parsed = JSON.parse(jsonText);
@@ -49,11 +73,13 @@ export function extractWorkflowVars(raw: string): { vars: Record<string, string>
       continue;
     }
   }
-  const candidateStart = raw.lastIndexOf("{");
+  const candidateStart = trimmed.lastIndexOf("{");
   if (candidateStart !== -1) {
-    const candidate = raw.slice(candidateStart).trim();
-    if (candidate.endsWith("}")) {
-      return { vars: {}, warning: `Invalid workflow vars JSON: ${candidate.slice(0, 80)}` };
+    if (hasVarsBoundary(trimmed, candidateStart)) {
+      const candidate = trimmed.slice(candidateStart).trim();
+      if (candidate.endsWith("}")) {
+        return { vars: {}, warning: `Invalid workflow vars JSON: ${candidate.slice(0, 80)}` };
+      }
     }
   }
   return { vars: {} };
@@ -69,7 +95,7 @@ async function withStepTimeout<T>(promise: Promise<T>, timeout: number | undefin
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<null>((resolve) => {
     timer = setTimeout(() => {
-      const prefix = snapshot !== "" ? `${snapshot}: ` : workflowLabels.length > 1 ? `${workflowChain()}: ` : "";
+      const prefix = snapshot !== "" ? `${snapshot}: ` : "";
       ctx.ui.notify(`${prefix}${scope}step timed out after ${timeout}ms`, "error");
       resolve(null);
     }, timeout);
@@ -234,12 +260,8 @@ async function runStoredCommand(
   timeout?: number,
   scope: string = "",
 ): Promise<boolean> {
-  const raw = getCommands()[num];
-  if (!raw) {
-    notifyMissingEntry(ctx, "Command", num, undefined, "error");
-    return false;
-  }
-  const command = interpolateText(raw, vars);
+  const command = resolveCommandText(num, vars, ctx);
+  if (command === null) return false;
   const task = runCommand(pi, command, `${prefix}${command}...`, ctx.ui);
   const result = await withStepTimeout(task, timeout, ctx, scope);
   if (result === null) return false;
@@ -271,12 +293,8 @@ async function sendStoredMessage(
   timeout?: number,
   scope: string = "",
 ): Promise<boolean> {
-  const raw = getMessages()[num];
-  if (raw === undefined) {
-    notifyMissingEntry(ctx, "Message", num, undefined, "error");
-    return false;
-  }
-  const text = interpolateText(raw, vars);
+  const text = resolveMessageText(num, vars, ctx);
+  if (text === null) return false;
   ctx.ui.setWorkingMessage(workingText);
   const task = sendAndWaitForTurn(pi, ctx, text);
   const result = await withStepTimeout(task, timeout, ctx, scope);

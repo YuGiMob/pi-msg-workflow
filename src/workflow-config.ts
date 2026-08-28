@@ -79,7 +79,7 @@ export function isNumericString(value: unknown): value is string {
   return typeof value === "string" && /^\d+$/.test(value);
 }
 
-function isValidTimeout(value: unknown): boolean {
+export function isValidTimeout(value: unknown): boolean {
   return typeof value === "number" && Number.isInteger(value) && value >= 1000 && value <= 600000;
 }
 
