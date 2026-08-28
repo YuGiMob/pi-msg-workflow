@@ -277,6 +277,57 @@ export function notifyNavigationStatus(
   return true;
 }
 
+async function runTreeStep(ctx: ExtensionCommandContext, scope: string, tree: string, timeout: number | undefined, retries: number, vars: Record<string, string>): Promise<boolean> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    if (tree === "0") {
+      ctx.ui.setWorkingMessage(withWorkflowChain(`${scope}starting a new session...`));
+      const roots = ctx.sessionManager.getTree();
+      const root = roots[0];
+      if (root !== undefined) {
+        const navigateTask = ctx.navigateTree(root.entry.id, { summarize: false });
+        const result = await withStepTimeout(navigateTask, timeout, ctx, scope);
+        if (result === null) {
+          ctx.ui.setWorkingMessage();
+          if (attempt < retries && !workflowStopRequested) {
+            if (!(await notifyRetry(ctx, scope, `retrying new session after timeout (${attempt}/${retries})`, attempt))) return false;
+            continue;
+          }
+          return false;
+        }
+        if (result.cancelled) {
+          ctx.ui.notify("Workflow cancelled", "warning");
+          return false;
+        }
+      }
+      ctx.ui.notify("New session started", "info");
+      ctx.ui.setWorkingMessage();
+      return true;
+    }
+    ctx.ui.setWorkingMessage(withWorkflowChain(`${scope}resetting context to message ${tree}...`));
+    const task = navigateToMessageAnchor(ctx, tree, false, vars);
+    const status = await withStepTimeout(task, timeout, ctx, scope);
+    if (status === null) {
+      ctx.ui.setWorkingMessage();
+      if (attempt < retries && !workflowStopRequested) {
+        if (!(await notifyRetry(ctx, scope, `retrying context reset to ${tree} after timeout (${attempt}/${retries})`, attempt))) return false;
+        continue;
+      }
+      return false;
+    }
+    const navigated = notifyNavigationStatus(ctx, tree, status as TreeNavigationStatus, "Workflow cancelled", "error");
+    ctx.ui.setWorkingMessage();
+    if (!navigated) {
+      if (attempt < retries && !workflowStopRequested && status === "failed") {
+        if (!(await notifyRetry(ctx, scope, `retrying context reset to ${tree} (${attempt}/${retries})`, attempt))) return false;
+        continue;
+      }
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 async function checkForChanges(pi: ExtensionAPI, ctx: ExtensionCommandContext, scope: string): Promise<boolean | null> {
   ctx.ui.setWorkingMessage(withWorkflowChain(`${scope}checking for changes...`));
   let statusResult: ExecResult;
@@ -455,58 +506,7 @@ async function runPhases(
           return false;
         }
         if (step.tree !== undefined) {
-          const retries = retriesFor(step);
-          let succeeded = false;
-          for (let attempt = 1; attempt <= retries; attempt++) {
-            if (step.tree === "0") {
-              ctx.ui.setWorkingMessage(withWorkflowChain(`${scope}starting a new session...`));
-              const roots = ctx.sessionManager.getTree();
-              const root = roots[0];
-              if (root !== undefined) {
-                const navigateTask = ctx.navigateTree(root.entry.id, { summarize: false });
-                const result = await withStepTimeout(navigateTask, step.timeout, ctx, scope);
-                if (result === null) {
-                  ctx.ui.setWorkingMessage();
-                  if (attempt < retries && !workflowStopRequested) {
-                    if (!(await notifyRetry(ctx, scope, `retrying new session after timeout (${attempt}/${retries})`, attempt))) return false;
-                    continue;
-                  }
-                  return false;
-                }
-                if (result.cancelled) {
-                  ctx.ui.notify("Workflow cancelled", "warning");
-                  return false;
-                }
-              }
-              ctx.ui.notify("New session started", "info");
-              ctx.ui.setWorkingMessage();
-              succeeded = true;
-              break;
-            }
-            ctx.ui.setWorkingMessage(withWorkflowChain(`${scope}resetting context to message ${step.tree}...`));
-            const task = navigateToMessageAnchor(ctx, step.tree, false, vars);
-            const status = await withStepTimeout(task, step.timeout, ctx, scope);
-            if (status === null) {
-              ctx.ui.setWorkingMessage();
-              if (attempt < retries && !workflowStopRequested) {
-                if (!(await notifyRetry(ctx, scope, `retrying context reset to ${step.tree} after timeout (${attempt}/${retries})`, attempt))) return false;
-                continue;
-              }
-              return false;
-            }
-            const navigated = notifyNavigationStatus(ctx, step.tree, status as TreeNavigationStatus, "Workflow cancelled", "error");
-            ctx.ui.setWorkingMessage();
-            if (!navigated) {
-              if (attempt < retries && !workflowStopRequested && status === "failed") {
-                if (!(await notifyRetry(ctx, scope, `retrying context reset to ${step.tree} (${attempt}/${retries})`, attempt))) return false;
-                continue;
-              }
-              return false;
-            }
-            succeeded = true;
-            break;
-          }
-          if (!succeeded) return false;
+          if (!(await runTreeStep(ctx, scope, step.tree, step.timeout, retriesFor(step), vars))) return false;
           continue;
         }
         if (step.onlyIfChanges) {

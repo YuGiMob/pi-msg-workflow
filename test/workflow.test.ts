@@ -255,7 +255,7 @@ describe("workflow extension", () => {
     const [factory, options] = ctx.ui.custom.mock.calls[0]!;
     const done = vi.fn();
     const overlay = factory({ terminal: { rows: 24 }, showOverlay }, theme, {}, done);
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Failed to read messages.json"), expect.anything());
+    expect(errorSpy.mock.calls.some((args) => String(args[0]).includes("Failed to read messages.json"))).toBe(true);
     expect(showOverlay).toHaveBeenCalledTimes(1);
     expect(showOverlay.mock.calls[0]![0].render(60).join("\n")).toContain("Failed to read messages.json");
     options.onHandle();

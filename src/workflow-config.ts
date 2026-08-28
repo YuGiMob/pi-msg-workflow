@@ -1,5 +1,5 @@
 import { errorMessage } from "./errors.js";
-import { compareNumericKeys, readJsonFile, readJsonObject, writeJsonAtomic } from "./json-file.js";
+import { readJsonFile, readJsonObject, sortedByNumericKeys, writeJsonAtomic } from "./json-file.js";
 import { MAX_ROUNDS, WORKFLOW_FILE } from "./constants.js";
 import { ensureUserData, ensureUserDataDir, userDataPath } from "./user-data.js";
 
@@ -282,8 +282,7 @@ function readWorkflowEntries(): Record<string, unknown> {
 }
 
 function writeWorkflowEntries(workflows: Record<string, unknown>): void {
-  const sorted = Object.fromEntries(Object.entries(workflows).sort(([a], [b]) => compareNumericKeys(a, b)));
-  writeJsonAtomic(WORKFLOW_PATH, sorted);
+  writeJsonAtomic(WORKFLOW_PATH, sortedByNumericKeys(workflows));
 }
 
 export function setWorkflowConfig(index: string, config: WorkflowConfig): void {

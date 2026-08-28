@@ -60,3 +60,7 @@ export function compareNumericKeys(a: string, b: string): number {
   if (Number.isNaN(nb)) return -1;
   return na - nb;
 }
+
+export function sortedByNumericKeys<T>(obj: Record<string, T>): Record<string, T> {
+  return Object.fromEntries(Object.entries(obj).sort(([a], [b]) => compareNumericKeys(a, b))) as Record<string, T>;
+}

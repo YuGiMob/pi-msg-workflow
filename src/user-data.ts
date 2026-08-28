@@ -3,6 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { errorMessage } from "./errors.js";
 import { readJsonObject, writeJsonAtomic } from "./json-file.js";
 import { DEFAULTS_FILE } from "./constants.js";
 
@@ -30,7 +31,7 @@ function checksumFile(filePath: string): string {
 }
 
 function readDefaults(): Record<string, string> {
-  return (readJsonObject(userDataPath(DEFAULTS_FILE)) ?? {}) as Record<string, string>;
+  return (readJsonObject(userDataPath(DEFAULTS_FILE), (err) => console.error(`Failed to read ${DEFAULTS_FILE}: ${errorMessage(err)}`)) ?? {}) as Record<string, string>;
 }
 
 function setDefaultChecksum(fileName: string, checksum: string): void {
@@ -63,7 +64,7 @@ export function ensureUserData(fileName: string): void {
       setDefaultChecksum(fileName, packageChecksum);
     }
   } catch (err) {
-    console.error(`Failed to sync user data for ${fileName}:`, err);
+    console.error(`Failed to sync user data for ${fileName}: ${errorMessage(err)}`);
   }
 }
 
@@ -76,7 +77,7 @@ export function resetUserData(fileName: string): boolean {
     setDefaultChecksum(fileName, checksumFile(packageFile));
     return true;
   } catch (err) {
-    console.error(`Failed to reset user data for ${fileName}:`, err);
+    console.error(`Failed to reset user data for ${fileName}: ${errorMessage(err)}`);
     return false;
   }
 }

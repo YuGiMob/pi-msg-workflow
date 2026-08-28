@@ -1,5 +1,6 @@
+import { errorMessage } from "./errors.js";
 import { ensureUserData, ensureUserDataDir, userDataPath } from "./user-data.js";
-import { compareNumericKeys, readJsonObject, writeJsonAtomic } from "./json-file.js";
+import { readJsonObject, sortedByNumericKeys, writeJsonAtomic } from "./json-file.js";
 
 export function createJsonStore(fileName: string): {
   get(): Record<string, string>;
@@ -9,7 +10,7 @@ export function createJsonStore(fileName: string): {
   return {
     get() {
       ensureUserData(fileName);
-      const parsed = readJsonObject(file, (err) => console.error(`Failed to read ${fileName}:`, err));
+      const parsed = readJsonObject(file, (err) => console.error(`Failed to read ${fileName}: ${errorMessage(err)}`));
       if (parsed === null) return {};
       return Object.fromEntries(
         Object.entries(parsed).filter(([, value]) => typeof value === "string"),
@@ -17,10 +18,7 @@ export function createJsonStore(fileName: string): {
     },
     set(store) {
       ensureUserDataDir();
-      const sorted = Object.fromEntries(
-        Object.entries(store).sort(([a], [b]) => compareNumericKeys(a, b)),
-      );
-      writeJsonAtomic(file, sorted);
+      writeJsonAtomic(file, sortedByNumericKeys(store));
     },
   };
 }
