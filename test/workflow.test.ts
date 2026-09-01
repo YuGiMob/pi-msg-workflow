@@ -164,12 +164,17 @@ function createCtx(entries: any[] = [], overrides: Record<string, any> = {}) {
 describe("workflow extension", () => {
   let pi: any;
   let commands: Record<string, any>;
+  let shortcuts: Record<string, any>;
 
   beforeEach(async () => {
     commands = {};
+    shortcuts = {};
     pi = {
       registerCommand: vi.fn((name: string, cmd: any) => {
         commands[name] = cmd;
+      }),
+      registerShortcut: vi.fn((name: string, opts: any) => {
+        shortcuts[name] = opts;
       }),
       sendUserMessage: vi.fn((content: string) => {
         const id = String(holder.branch.length);
@@ -205,11 +210,12 @@ describe("workflow extension", () => {
     });
   }
 
-  it("registers the workflow, tree-jump, workflow-stop and workflow-reset commands", () => {
+  it("registers the workflow, tree-jump and workflow-reset commands and escape shortcut", () => {
     expect(commands["workflow"]).toBeDefined();
     expect(commands["tree-jump"]).toBeDefined();
-    expect(commands["workflow-stop"]).toBeDefined();
+    expect(commands["workflow-stop"]).toBeUndefined();
     expect(commands["workflow-reset"]).toBeDefined();
+    expect(shortcuts["escape"]).toBeDefined();
   });
 
 
@@ -392,7 +398,7 @@ describe("workflow extension", () => {
       const ctx = createCtx([]);
       const handlerPromise = commands["workflow"].handler("1", ctx);
       await vi.advanceTimersByTimeAsync(100);
-      await commands["workflow-stop"].handler("", ctx);
+      await shortcuts["escape"].handler(ctx);
       await vi.advanceTimersByTimeAsync(100);
       await handlerPromise;
       expect(pi.sendUserMessage).not.toHaveBeenCalledWith(MSG8, { deliverAs: "followUp" });
@@ -863,7 +869,7 @@ describe("workflow extension", () => {
       });
       const handlerPromise = commands["workflow"].handler("1", ctx);
       await vi.advanceTimersByTimeAsync(100);
-      await commands["workflow-stop"].handler("", ctx);
+      await shortcuts["escape"].handler(ctx);
       releaseIdle();
       await vi.advanceTimersByTimeAsync(100);
       await handlerPromise;
@@ -935,7 +941,7 @@ describe("workflow extension", () => {
       await vi.advanceTimersByTimeAsync(20_000);
       expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
       expect(pi.sendUserMessage).toHaveBeenCalledWith(MSG6, { deliverAs: "followUp" });
-      await commands["workflow-stop"].handler("", ctx);
+      await shortcuts["escape"].handler(ctx);
       await vi.advanceTimersByTimeAsync(100);
       await handlerPromise;
       expect(ctx.ui.notify).toHaveBeenCalledWith("Workflow stopped", "info");
@@ -1037,20 +1043,20 @@ describe("workflow extension", () => {
     expect(sent).toEqual([MSG1, MSG2, MSG3, MSG4, MSG5, MSG6, MSG7, MSG6, MSG7, MSG8]);
   });
 
-  it("workflow-stop requires interactive mode", async () => {
+  it("escape shortcut is available and does not require interactive mode", async () => {
     const ctx = createCtx([], { hasUI: false });
-    await commands["workflow-stop"].handler("", ctx);
-    expect(ctx.ui.notify).toHaveBeenCalledWith("/workflow-stop requires interactive mode", "error");
+    await shortcuts["escape"].handler(ctx);
+    expect(ctx.ui.notify).not.toHaveBeenCalledWith(expect.stringContaining("requires interactive mode"), expect.anything());
   });
 
-  it("workflow-stop requests cancellation", async () => {
+  it("escape requests cancellation", async () => {
     vi.useFakeTimers();
     try {
       blockSendsOf(MSG6);
       const ctx = createCtx(fullPhaseA());
       const handlerPromise = commands["workflow"].handler("1", ctx);
       await vi.advanceTimersByTimeAsync(100);
-      await commands["workflow-stop"].handler("", ctx);
+      await shortcuts["escape"].handler(ctx);
       expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("stop after the current step"), "info");
       await vi.advanceTimersByTimeAsync(100);
       await handlerPromise;
@@ -1059,10 +1065,10 @@ describe("workflow extension", () => {
     }
   });
 
-  it("workflow-stop reports when no workflow is running", async () => {
+  it("escape does nothing when no workflow is running and idle", async () => {
     const ctx = createCtx();
-    await commands["workflow-stop"].handler("", ctx);
-    expect(ctx.ui.notify).toHaveBeenCalledWith("No workflow is currently running", "info");
+    await shortcuts["escape"].handler(ctx);
+    expect(ctx.ui.notify).not.toHaveBeenCalledWith("No workflow is currently running", expect.anything());
   });
 
   it("refuses to start while another workflow is running", async () => {
@@ -1074,7 +1080,7 @@ describe("workflow extension", () => {
       await vi.advanceTimersByTimeAsync(100);
       await commands["workflow"].handler("1", ctx);
       expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("already running"), "warning");
-      await commands["workflow-stop"].handler("", ctx);
+      await shortcuts["escape"].handler(ctx);
       await vi.advanceTimersByTimeAsync(100);
       await first;
     } finally {
@@ -1093,7 +1099,7 @@ describe("workflow extension", () => {
       await commands["workflow"].handler("1", ctx);
       expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("already running"), "warning");
       expect(ctx.ui.notify).not.toHaveBeenCalledWith(expect.stringContaining("workflow.json"), "warning");
-      await commands["workflow-stop"].handler("", ctx);
+      await shortcuts["escape"].handler(ctx);
       await vi.advanceTimersByTimeAsync(100);
       await first;
     } finally {
@@ -1108,7 +1114,7 @@ describe("workflow extension", () => {
       const ctx = createCtx(fullPhaseA());
       const handlerPromise = commands["workflow"].handler("1", ctx);
       await vi.advanceTimersByTimeAsync(100);
-      await commands["workflow-stop"].handler("", ctx);
+      await shortcuts["escape"].handler(ctx);
       await vi.advanceTimersByTimeAsync(100);
       await handlerPromise;
       expect(ctx.ui.notify).toHaveBeenCalledWith("Workflow stopped", "info");
@@ -1120,7 +1126,7 @@ describe("workflow extension", () => {
   });
 
   it("clears the cancellation request when a new workflow starts", async () => {
-    await commands["workflow-stop"].handler("", createCtx());
+    await shortcuts["escape"].handler(createCtx());
     const ctx = createCtx(fullPhaseA());
     await commands["workflow"].handler("1", ctx);
     const sent = pi.sendUserMessage.mock.calls.map((c: any[]) => c[0]);
@@ -1332,7 +1338,7 @@ describe("workflow extension", () => {
       const ctx = createCtx(fullPhaseA());
       const handlerPromise = commands["workflow"].handler("1", ctx);
       await vi.advanceTimersByTimeAsync(100);
-      await commands["workflow-stop"].handler("", ctx);
+      await shortcuts["escape"].handler(ctx);
       await vi.advanceTimersByTimeAsync(100);
       await handlerPromise;
       expect(ctx.ui.notify).toHaveBeenCalledWith("Workflow stopped", "info");
@@ -1558,12 +1564,17 @@ describe("workflow extension", () => {
 describe("/tree-jump command", () => {
   let pi: any;
   let commands: Record<string, any>;
+  let shortcuts: Record<string, any>;
 
   beforeEach(async () => {
     commands = {};
+    shortcuts = {};
     pi = {
       registerCommand: vi.fn((name: string, cmd: any) => {
         commands[name] = cmd;
+      }),
+      registerShortcut: vi.fn((name: string, opts: any) => {
+        shortcuts[name] = opts;
       }),
       sendUserMessage: vi.fn(),
       exec: vi.fn(),

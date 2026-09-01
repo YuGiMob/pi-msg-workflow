@@ -87,3 +87,12 @@ export function findAnchorAfterMessage(entries: SessionEntry[], messageText: str
 export function countUserTextMatches(entries: SessionEntry[], text: string): number {
   return entries.filter((entry) => userMessageText(entry) === text).length;
 }
+export function lastAssistantStopReason(entries: SessionEntry[]): string | undefined {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (entry.type !== "message") continue;
+    const message = entry.message as unknown as Record<string, unknown>;
+    if (message["role"] === "assistant") return message["stopReason"] as string | undefined;
+  }
+  return undefined;
+}

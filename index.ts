@@ -195,6 +195,20 @@ export default function (pi: ExtensionAPI) {
   registerPerformCommand(pi, "cmd");
   registerChangeCommand(pi, "cmd", getCommands, setCommands, "Command", COMMANDS_FILE);
   registerShowCommand(pi, "cmd", getCommands, "Command");
+  if (typeof (pi as unknown as Record<string, unknown>)["registerShortcut"] === "function") {
+    (pi as unknown as { registerShortcut: (a: string, b: unknown) => void }).registerShortcut("escape", {
+      description: "Stop running workflow",
+      handler: async (ctx) => {
+        if (isWorkflowRunning()) {
+          requestWorkflowStop();
+          ctx.ui.notify("Workflow stop requested. It will stop after the current step", "info");
+          if (!ctx.isIdle()) (ctx as unknown as { abort?: () => void }).abort?.();
+        } else if (!ctx.isIdle()) {
+          (ctx as unknown as { abort?: () => void }).abort?.();
+        }
+      },
+    });
+  }
 
   pi.registerCommand("workflow-edit", {
     description:
@@ -253,18 +267,6 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("workflow-stop", {
-    description: "Cancel the running workflow after the current step completes",
-    handler: async (_args, ctx: ExtensionCommandContext) => {
-      if (!requireInteractive(ctx, "workflow-stop")) return;
-      if (!isWorkflowRunning()) {
-        ctx.ui.notify("No workflow is currently running", "info");
-        return;
-      }
-      requestWorkflowStop();
-      ctx.ui.notify("Workflow stop requested. It will stop after the current step", "info");
-    },
-  });
 
   pi.registerCommand("workflow-reset", {
     description: "Reset workflow.json, messages.json and commands.json to the packaged defaults",
@@ -319,7 +321,7 @@ export default function (pi: ExtensionAPI) {
       const vars = extracted.vars;
       if (extracted.warning !== undefined) ctx.ui.notify(extracted.warning, "warning");
       if (!dryRun && isWorkflowRunning()) {
-        ctx.ui.notify("A workflow is already running. Use /workflow-stop to cancel it", "warning");
+        ctx.ui.notify("A workflow is already running. Press Esc to cancel it", "warning");
         return;
       }
       const numeric = tokens.filter(isNumericString);

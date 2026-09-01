@@ -2,7 +2,7 @@ import type { ExecResult, ExtensionAPI, ExtensionCommandContext, SessionEntry } 
 import { getMessages } from "./messages.js";
 import { getCommands } from "./commands.js";
 import { errorMessage } from "./errors.js";
-import { countPhaseMatches, countUserTextMatches, findAnchorAfterMessage, lastAssistantMessageText } from "./session-helpers.js";
+import { countPhaseMatches, countUserTextMatches, findAnchorAfterMessage, lastAssistantMessageText, lastAssistantStopReason } from "./session-helpers.js";
 import { runCommand, commandFailureMessage, type CommandResult } from "./command-runner.js";
 import { runCommit, commitFailureMessage, type CommitResult } from "./commit.js";
 import { getWorkflowConfig, getWorkflowRunError, loopSections, type WorkflowConfig, type LoopStep, type StartStep } from "./workflow-config.js";
@@ -366,6 +366,26 @@ async function checkForChanges(pi: ExtensionAPI, ctx: ExtensionCommandContext, s
   if (!changed) ctx.ui.notify(withWorkflowChain(`${scope}no changes detected, skipping step`), "info");
   return changed;
 }
+async function handleLengthContinuation(pi: ExtensionAPI, ctx: ExtensionCommandContext, scope: string): Promise<boolean> {
+  for (let i = 0; i < 3; i++) {
+    if (workflowStopRequested) return false;
+    const reason = lastAssistantStopReason(ctx.sessionManager.getBranch());
+    if (reason !== "length") return true;
+    ctx.ui.setWorkingMessage(withWorkflowChain(`${scope}sending continuation for truncated output...`));
+    const result = await sendAndWaitForTurn(pi, ctx, "ok");
+    ctx.ui.setWorkingMessage();
+    if (result === "cancelled") {
+      ctx.ui.notify("Workflow stopped", "info");
+      return false;
+    }
+    if (result === "failed") {
+      ctx.ui.notify("Failed to send continuation for truncated output", "error");
+      return false;
+    }
+  }
+  ctx.ui.notify(withWorkflowChain(`${scope}output still truncated after continuations, proceeding`), "warning");
+  return true;
+}
 
 async function runStoredCommand(
   pi: ExtensionAPI,
@@ -497,6 +517,7 @@ async function runOncePhase(
       const working = withWorkflowChain(`Sending message ${step.msg}...`);
       if (!(await sendStoredMessage(pi, ctx, step.msg, working, vars, step.timeout, "", retriesFor(step)))) return false;
     } else if (!(await dispatchStep(pi, ctx, step, vars, ""))) return false;
+      if (!(await handleLengthContinuation(pi, ctx, ""))) return false;
   }
   return true;
 }
@@ -538,6 +559,7 @@ async function runPhases(
           roundExecutedConditional = true;
         }
         if (!(await dispatchStep(pi, ctx, step, vars, scope))) return false;
+        if (!(await handleLengthContinuation(pi, ctx, scope))) return false;
       }
       if (roundHasConditional) {
         if (!roundExecutedConditional) {
@@ -628,7 +650,7 @@ export async function runWorkflow(
   vars: Record<string, string> = {},
 ): Promise<void> {
   if (!tryStartWorkflow()) {
-    ctx.ui.notify("A workflow is already running. Use /workflow-stop to cancel it", "warning");
+    ctx.ui.notify("A workflow is already running. Press Esc to cancel it", "warning");
     return;
   }
   workflowStopRequested = false;
