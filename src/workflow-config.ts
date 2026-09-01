@@ -10,7 +10,6 @@ export interface LoopStep {
   workflow?: string;
   commit?: boolean;
   onlyIfChanges?: boolean;
-  timeout?: number;
   retries?: number;
 }
 
@@ -19,7 +18,6 @@ export interface StartStep {
   cmd?: string;
   workflow?: string;
   commit?: boolean;
-  timeout?: number;
   retries?: number;
 }
 
@@ -72,7 +70,7 @@ function defaultConfig(): WorkflowConfig {
 function stepAction(value: unknown): { action: string; content: unknown; step: Record<string, unknown> } | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const step = value as Record<string, unknown>;
-  const keys = Object.keys(step).filter((key) => key !== "onlyIfChanges" && key !== "timeout" && key !== "retries");
+  const keys = Object.keys(step).filter((key) => key !== "onlyIfChanges" && key !== "retries");
   if (keys.length !== 1) return null;
   const action = keys[0]!;
   return { action, content: step[action], step };
@@ -86,10 +84,6 @@ function isValidIntInRange(value: unknown, min: number, max: number): boolean {
   return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
 }
 
-export function isValidTimeout(value: unknown): boolean {
-  return isValidIntInRange(value, 1000, 600000);
-}
-
 export function isValidRetries(value: unknown): boolean {
   return isValidIntInRange(value, 1, 3);
 }
@@ -101,7 +95,6 @@ export function isValidStopAfterEmpty(value: unknown): boolean {
 function isStepForAllowedActions(value: unknown, allowed: string[], checkOnlyIfChanges: boolean): boolean {
   const entry = stepAction(value);
   if (entry === null) return false;
-  if ("timeout" in entry.step && !isValidTimeout(entry.step.timeout)) return false;
   if ("retries" in entry.step && !isValidRetries(entry.step.retries)) return false;
   if (entry.action === "commit") return entry.content === true && !("onlyIfChanges" in entry.step);
   if (!allowed.includes(entry.action)) return false;
@@ -395,8 +388,8 @@ export function getWorkflowRunError(
   index: string,
 ): string | null {
   const issues = getWorkflowIssues(config, messages, commands, workflows, index);
-  if (issues.missingMessages.length > 0) return `Missing messages in messages.json: ${issues.missingMessages.join(", ")}. Restore the default stores with /workflow-reset or add them with /change-msg.`;
-  if (issues.missingCommands.length > 0) return `Missing commands in commands.json: ${issues.missingCommands.join(", ")}. Restore the default stores with /workflow-reset or add them with /change-cmd.`;
+  if (issues.missingMessages.length > 0) return `Missing messages in messages.json: ${issues.missingMessages.join(", ")}. Restore the default stores with /workflow-reset or add them in the editor with /workflow-edit.`;
+  if (issues.missingCommands.length > 0) return `Missing commands in commands.json: ${issues.missingCommands.join(", ")}. Restore the default stores with /workflow-reset or add them in the editor with /workflow-edit.`;
   if (issues.missingWorkflows.length > 0) return `Missing workflows in workflow.json: ${issues.missingWorkflows.join(", ")}. Create them with /workflow-edit (press w).`;
   if (issues.cycle !== null) return `Circular workflow reference: ${issues.cycle.join(" → ")}. Fix workflow.json first.`;
   if (issues.hasBadSection) return `The first step of every loop section must be a tree step (context reset)`;

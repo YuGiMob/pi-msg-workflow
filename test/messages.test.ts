@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { readFileSync, writeFileSync, renameSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 
 const MESSAGES = {
   "1": "Test message one",
@@ -60,11 +60,6 @@ describe("messages extension", () => {
       expect(cmd).toBeDefined();
     });
 
-    it("registers /change-msg command", () => {
-      const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
-      expect(cmd).toBeDefined();
-    });
-
     it("registers /show-msg command", () => {
       const cmd = capturedCommands.find((c: any) => c.name === "show-msg");
       expect(cmd).toBeDefined();
@@ -89,7 +84,7 @@ describe("messages extension", () => {
       await cmd.cmd.handler("99", ctx);
 
       expect(ctx.ui.notify).toHaveBeenCalledWith(
-        "Message 99 does not exist. Use /change-msg 99 \"content\" to create it.",
+        "Message 99 does not exist. Use /workflow-edit to create it in the Messages tab.",
         "warning",
       );
     });
@@ -110,96 +105,6 @@ describe("messages extension", () => {
       await cmd.cmd.handler("1", ctx);
 
       expect(ctx.ui.notify).toHaveBeenCalledWith("/msg requires interactive mode", "error");
-    });
-  });
-
-  describe("/change-msg command", () => {
-    it("creates or updates a message", async () => {
-      const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
-      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
-
-      await cmd.cmd.handler('3 "New test message"', ctx);
-
-      expect(writeFileSync).toHaveBeenCalled();
-      expect(ctx.ui.notify).toHaveBeenCalledWith("Message 3 updated", "info");
-    });
-
-    it("accepts single-quoted content", async () => {
-      const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
-      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
-
-      await cmd.cmd.handler("3 'New test message'", ctx);
-
-      expect(writeFileSync).toHaveBeenCalled();
-      expect(ctx.ui.notify).toHaveBeenCalledWith("Message 3 updated", "info");
-    });
-
-    it("trims surrounding whitespace from quoted content", async () => {
-      const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
-      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
-
-      await cmd.cmd.handler('3 "  New test message  "', ctx);
-
-      const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
-      expect(written["3"]).toBe("New test message");
-      expect(ctx.ui.notify).toHaveBeenCalledWith("Message 3 updated", "info");
-    });
-
-    it("rejects content that starts with a quote", async () => {
-      const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
-      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
-      await cmd.cmd.handler('3 "a" b', ctx);
-      expect(writeFileSync).not.toHaveBeenCalled();
-      expect(ctx.ui.notify).toHaveBeenCalledWith("Usage: /change-msg <number> \"<content>\"", "warning");
-    });
-
-    it("writes atomically via a tmp file and rename", async () => {
-      const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
-      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
-      await cmd.cmd.handler('3 "New test message"', ctx);
-      expect(writeFileSync).toHaveBeenCalledWith(expect.stringContaining("messages.json.tmp"), expect.any(String), "utf-8");
-      expect(renameSync).toHaveBeenCalledWith(expect.stringContaining("messages.json.tmp"), expect.stringContaining("messages.json"));
-    });
-
-    it("writes store keys in numeric order", async () => {
-      vi.mocked(readFileSync).mockImplementation((path: unknown) => {
-        if (String(path).includes("defaults.json")) return JSON.stringify({ "messages.json": "recorded", "commands.json": "recorded" });
-        if (String(path).includes("commands.json")) return JSON.stringify(COMMANDS);
-        return JSON.stringify({ "2": "second message", "1": "first message" });
-      });
-      const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
-      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
-      await cmd.cmd.handler('3 "third message"', ctx);
-      const written = JSON.parse((writeFileSync as any).mock.calls[0]![1]);
-      expect(Object.keys(written)).toEqual(["1", "2", "3"]);
-    });
-
-    it("reports a failed write", async () => {
-      vi.mocked(writeFileSync).mockImplementationOnce(() => {
-        throw new Error("disk full");
-      });
-      const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
-      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
-      await cmd.cmd.handler('3 "New test message"', ctx);
-      expect(ctx.ui.notify).toHaveBeenCalledWith("Could not save messages.json: disk full", "error");
-    });
-
-    it("shows warning for short messages", async () => {
-      const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
-      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
-
-      await cmd.cmd.handler('3 "ab"', ctx);
-
-      expect(ctx.ui.notify).toHaveBeenCalledWith("Message must be at least 5 characters", "warning");
-    });
-
-    it("shows usage when no args provided", async () => {
-      const cmd = capturedCommands.find((c: any) => c.name === "change-msg");
-      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
-
-      await cmd.cmd.handler("", ctx);
-
-      expect(ctx.ui.notify).toHaveBeenCalledWith("Usage: /change-msg <number> <content>", "warning");
     });
   });
 
@@ -262,9 +167,8 @@ describe("messages extension", () => {
     });
   });
   describe("cmd command family", () => {
-    it("registers /cmd, /change-cmd and /show-cmd", () => {
+    it("registers /cmd and /show-cmd", () => {
       expect(capturedCommands.some((c: any) => c.name === "cmd")).toBe(true);
-      expect(capturedCommands.some((c: any) => c.name === "change-cmd")).toBe(true);
       expect(capturedCommands.some((c: any) => c.name === "show-cmd")).toBe(true);
     });
 
@@ -364,14 +268,14 @@ describe("messages extension", () => {
       expect(ctx.ui.setWorkingMessage).toHaveBeenLastCalledWith();
     });
 
-    it("points to /change-cmd when the command does not exist", async () => {
+    it("points to the editor when the command does not exist", async () => {
       const cmd = capturedCommands.find((c: any) => c.name === "cmd");
       const ctx = { hasUI: true, ui: { notify: vi.fn() } };
 
       await cmd.cmd.handler("99", ctx);
 
       expect(ctx.ui.notify).toHaveBeenCalledWith(
-        'Command 99 does not exist. Use /change-cmd 99 "content" to create it.',
+        "Command 99 does not exist. Use /workflow-edit to create it in the Commands tab.",
         "warning",
       );
     });
@@ -392,25 +296,6 @@ describe("messages extension", () => {
       await cmd.cmd.handler("1", ctx);
 
       expect(ctx.ui.notify).toHaveBeenCalledWith("/cmd requires interactive mode", "error");
-    });
-
-    it("creates or updates a command via /change-cmd", async () => {
-      const cmd = capturedCommands.find((c: any) => c.name === "change-cmd");
-      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
-
-      await cmd.cmd.handler('3 "git status --porcelain"', ctx);
-
-      expect(writeFileSync).toHaveBeenCalled();
-      expect(ctx.ui.notify).toHaveBeenCalledWith("Command 3 updated", "info");
-    });
-
-    it("shows warning for short commands", async () => {
-      const cmd = capturedCommands.find((c: any) => c.name === "change-cmd");
-      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
-
-      await cmd.cmd.handler('3 "ab"', ctx);
-
-      expect(ctx.ui.notify).toHaveBeenCalledWith("Command must be at least 5 characters", "warning");
     });
 
     it("displays a specific command via /show-cmd", async () => {

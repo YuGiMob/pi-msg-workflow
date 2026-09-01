@@ -1,14 +1,13 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
-import { getMessages, setMessages } from "./src/messages.js";
-import { getCommands, setCommands } from "./src/commands.js";
+import { getMessages } from "./src/messages.js";
+import { getCommands } from "./src/commands.js";
 import { MAX_ROUNDS, WORKFLOW_FILE, MESSAGES_FILE, COMMANDS_FILE } from "./src/constants.js";
 import { compareNumericKeys } from "./src/json-file.js";
 import { runCommand, commandFailureMessage } from "./src/command-runner.js";
 import { getWorkflows, getWorkflowConfig, getWorkflowRunError, loopSections, totalLoopSteps, isNumericString, type StartStep, type LoopStep, type WorkflowConfig } from "./src/workflow-config.js";
 import { resetUserData } from "./src/user-data.js";
 import { WorkflowEditorOverlay, WorkflowTab, MessagesTab, CommandsTab, MAX_OVERLAY_HEIGHT_RATIO, type EditorTab } from "./src/workflow-editor.js";
-import { errorMessage } from "./src/errors.js";
 import { captureConsoleMessages } from "./src/console-capture.js";
 import { requestWorkflowStop, isWorkflowRunning, runWorkflow, notifyMissingEntry, navigateToMessageAnchor, notifyNavigationStatus, extractWorkflowVars, interpolateText } from "./src/workflow-runner.js";
 
@@ -28,7 +27,7 @@ function clip(text: string | undefined, max: number): string {
 }
 
 function describeStep(step: LoopStep, messages: Record<string, string>, commands: Record<string, string>, workflows: Record<string, WorkflowConfig>, vars: Record<string, string> = {}): string {
-  const suffix = `${step.onlyIfChanges ? " (if-changes)" : ""}${step.timeout !== undefined ? ` (timeout ${step.timeout}ms)` : ""}${step.retries !== undefined ? ` (retries ${step.retries})` : ""}`;
+  const suffix = `${step.onlyIfChanges ? " (if-changes)" : ""}${step.retries !== undefined ? ` (retries ${step.retries})` : ""}`;
   if (step.msg !== undefined) {
     const raw = messages[step.msg];
     return `msg ${step.msg}${suffix}: ${clip(raw === undefined ? undefined : interpolateText(raw, vars), 50)}`;
@@ -75,7 +74,7 @@ function registerStoreCommand(pi: ExtensionAPI, name: string, noun: string, getS
       if (num === null) return;
       const value = getStore()[num];
       if (!value) {
-        notifyMissingEntry(ctx, noun, num, `Use /change-${name} ${num} "content" to create it.`);
+        notifyMissingEntry(ctx, noun, num, `Use /workflow-edit to create it in the ${noun}s tab.`);
         return;
       }
       const ok = await execute(value, num, ctx);
@@ -99,45 +98,6 @@ function registerPerformCommand(pi: ExtensionAPI, name: string): void {
       return false;
     }
     return true;
-  });
-}
-
-function registerChangeCommand(
-  pi: ExtensionAPI,
-  name: string,
-  read: () => Record<string, string>,
-  write: (store: Record<string, string>) => void,
-  noun: string,
-  fileLabel: string,
-): void {
-  pi.registerCommand(`change-${name}`, {
-    description: `Change or create a predefined ${noun.toLowerCase()}`,
-    getArgumentCompletions: (prefix) => storeCompletions(read(), noun, prefix),
-    handler: async (args, ctx: ExtensionCommandContext) => {
-      if (!requireInteractive(ctx, `change-${name}`)) return;
-      const trimmed = requireArg(ctx, args, `/change-${name} <number> <content>`);
-      if (trimmed === null) return;
-      const match = trimmed.match(/^(\d+)\s+(?:"([^"]*)"|'([^']*)'|([^"'].*))$/);
-      if (!match) {
-        ctx.ui.notify(`Usage: /change-${name} <number> "<content>"`, "warning");
-        return;
-      }
-      const num = match[1];
-      const content = (match[2] ?? match[3] ?? match[4]).trim();
-      if (content.length < 5) {
-        ctx.ui.notify(`${noun} must be at least 5 characters`, "warning");
-        return;
-      }
-      const store = read();
-      store[num] = content;
-      try {
-        write(store);
-      } catch (err) {
-        ctx.ui.notify(`Could not save ${fileLabel}: ${errorMessage(err)}`, "error");
-        return;
-      }
-      ctx.ui.notify(`${noun} ${num} updated`, "info");
-    },
   });
 }
 
@@ -208,10 +168,8 @@ function notifyConfigErrors(ctx: ExtensionCommandContext, errors: string[]): voi
 
 export default function (pi: ExtensionAPI) {
   registerSendCommand(pi, "msg");
-  registerChangeCommand(pi, "msg", getMessages, setMessages, "Message", MESSAGES_FILE);
   registerShowCommand(pi, "msg", getMessages, "Message");
   registerPerformCommand(pi, "cmd");
-  registerChangeCommand(pi, "cmd", getCommands, setCommands, "Command", COMMANDS_FILE);
   registerShowCommand(pi, "cmd", getCommands, "Command");
   setupEscListener();
 

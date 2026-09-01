@@ -95,26 +95,6 @@ export function parseWorkflowArgs(raw: string): Record<string, string> {
   return extractWorkflowVars(raw).vars;
 }
 
-async function withStepTimeout<T>(promise: Promise<T>, timeout: number | undefined, ctx: ExtensionCommandContext, scope: string): Promise<T | null> {
-  if (timeout === undefined) return await promise;
-  const snapshot = workflowChain();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<null>((resolve) => {
-    timer = setTimeout(() => {
-      const prefix = snapshot !== "" ? `${snapshot}: ` : "";
-      ctx.ui.notify(`${prefix}${scope}step timed out after ${timeout}ms`, "error");
-      resolve(null);
-    }, timeout);
-  });
-  promise.catch(() => {});
-  let result: T | null;
-  try {
-    result = (await Promise.race([promise, timeoutPromise])) as T | null;
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-  return result;
-}
 
 function retriesFor(step: { retries?: number }): number {
   return step.retries ?? 1;
@@ -132,20 +112,13 @@ async function notifyRetry(ctx: ExtensionCommandContext, scope: string, message:
   ctx.ui.notify(withWorkflowChain(`${scope}${message}`), "warning");
   return delayWithStopCheck(retryDelay(attempt), ctx);
 }
-async function retryWithTimeout<T>(ctx: ExtensionCommandContext, scope: string, retries: number, timeout: number | undefined, task: () => Promise<T>, isSuccess: (result: T) => boolean, isRetryable: (result: T | null) => boolean, retryMessage: (result: T | null, attempt: number, retries: number) => string): Promise<T | null> {
+async function retryWithBackoff<T>(ctx: ExtensionCommandContext, scope: string, retries: number, task: () => Promise<T>, isSuccess: (result: T) => boolean, isRetryable: (result: T | null) => boolean, retryMessage: (result: T | null, attempt: number, retries: number) => string): Promise<T | null> {
   for (let attempt = 1; attempt <= retries; attempt++) {
-    let result: T | null;
+    let result: T;
     try {
-      result = await withStepTimeout(task(), timeout, ctx, scope) as T | null;
+      result = await task();
     } catch (err) {
       ctx.ui.notify(withWorkflowChain(`${scope}${errorMessage(err)}`), "error");
-      if (isRetryable(null) && attempt < retries && !isStopRequested(ctx)) {
-        if (!(await notifyRetry(ctx, scope, retryMessage(null, attempt, retries), attempt))) return null;
-        continue;
-      }
-      return null;
-    }
-    if (result === null) {
       if (isRetryable(null) && attempt < retries && !isStopRequested(ctx)) {
         if (!(await notifyRetry(ctx, scope, retryMessage(null, attempt, retries), attempt))) return null;
         continue;
@@ -290,30 +263,21 @@ export function notifyNavigationStatus(
   return true;
 }
 
-async function runTreeStep(ctx: ExtensionCommandContext, scope: string, tree: string, timeout: number | undefined, retries: number, vars: Record<string, string>): Promise<boolean> {
+async function runTreeStep(ctx: ExtensionCommandContext, scope: string, tree: string, retries: number, vars: Record<string, string>): Promise<boolean> {
   for (let attempt = 1; attempt <= retries; attempt++) {
     if (tree === "0") {
       ctx.ui.setWorkingMessage(withWorkflowChain(`${scope}starting a new session...`));
       const roots = ctx.sessionManager.getTree();
       const root = roots[0];
       if (root !== undefined) {
-        let result: { cancelled: boolean } | null;
+        let result: { cancelled: boolean };
         try {
-          const navigateTask = ctx.navigateTree(root.entry.id, { summarize: false });
-          result = await withStepTimeout(navigateTask, timeout, ctx, scope);
+          result = await ctx.navigateTree(root.entry.id, { summarize: false });
         } catch (err) {
           ctx.ui.setWorkingMessage();
           ctx.ui.notify(`Could not navigate: ${errorMessage(err)}`, "error");
           if (attempt < retries && !isStopRequested(ctx)) {
             if (!(await notifyRetry(ctx, scope, `retrying new session after error (${attempt}/${retries})`, attempt))) return false;
-            continue;
-          }
-          return false;
-        }
-        if (result === null) {
-          ctx.ui.setWorkingMessage();
-          if (attempt < retries && !isStopRequested(ctx)) {
-            if (!(await notifyRetry(ctx, scope, `retrying new session after timeout (${attempt}/${retries})`, attempt))) return false;
             continue;
           }
           return false;
@@ -328,17 +292,8 @@ async function runTreeStep(ctx: ExtensionCommandContext, scope: string, tree: st
       return true;
     }
     ctx.ui.setWorkingMessage(withWorkflowChain(`${scope}resetting context to message ${tree}...`));
-    const task = navigateToMessageAnchor(ctx, tree, false, vars);
-    const status = await withStepTimeout(task, timeout, ctx, scope);
-    if (status === null) {
-      ctx.ui.setWorkingMessage();
-      if (attempt < retries && !isStopRequested(ctx)) {
-        if (!(await notifyRetry(ctx, scope, `retrying context reset to ${tree} after timeout (${attempt}/${retries})`, attempt))) return false;
-        continue;
-      }
-      return false;
-    }
-    const navigated = notifyNavigationStatus(ctx, tree, status as TreeNavigationStatus, "Workflow cancelled", "error");
+    const status = await navigateToMessageAnchor(ctx, tree, false, vars);
+    const navigated = notifyNavigationStatus(ctx, tree, status, "Workflow cancelled", "error");
     ctx.ui.setWorkingMessage();
     if (!navigated) {
       if (attempt < retries && !isStopRequested(ctx) && status === "failed") {
@@ -396,21 +351,19 @@ async function runStoredCommand(
   num: string,
   prefix: string,
   vars: Record<string, string> = {},
-  timeout?: number,
   scope: string = "",
   retries = 1,
 ): Promise<boolean> {
   const command = resolveCommandText(num, vars, ctx);
   if (command === null) return false;
-  const result = await retryWithTimeout(
+  const result = await retryWithBackoff(
     ctx,
     scope,
     retries,
-    timeout,
     () => runCommand(pi, command, `${prefix}${command}...`, ctx.ui),
     (r) => r.ok,
-    (r) => r === null || (r !== null && !r.ok && r.reason !== "empty" && r.reason !== "unterminated"),
-    (r, attempt) => r === null ? `retrying after timeout (${attempt}/${retries})` : `retrying command ${num} (${attempt}/${retries}): ${commandFailureMessage(num, r as Extract<CommandResult, { ok: false }>) }`,
+    (r) => r === null || (!r.ok && r.reason !== "empty" && r.reason !== "unterminated"),
+    (r, attempt) => r === null ? `retrying command ${num} after error (${attempt}/${retries})` : `retrying command ${num} (${attempt}/${retries}): ${commandFailureMessage(num, r as Extract<CommandResult, { ok: false }>) }`,
   ) as CommandResult | null;
   if (result === null) return false;
   if (!result.ok) {
@@ -420,16 +373,15 @@ async function runStoredCommand(
   return true;
 }
 
-async function runCommitStep(pi: ExtensionAPI, ctx: ExtensionCommandContext, timeout: number | undefined, scope = "", retries = 1): Promise<boolean> {
-  const result = await retryWithTimeout(
+async function runCommitStep(pi: ExtensionAPI, ctx: ExtensionCommandContext, scope = "", retries = 1): Promise<boolean> {
+  const result = await retryWithBackoff(
     ctx,
     scope,
     retries,
-    timeout,
     () => runCommit(pi, ctx.ui, lastAssistantMessageText(ctx.sessionManager.getBranch()), withWorkflowChain(`${scope}Committing changes...`)),
     (r) => r.ok,
     () => true,
-    (r, attempt) => r === null ? `retrying commit after timeout (${attempt}/${retries})` : `retrying commit (${attempt}/${retries}): ${commitFailureMessage(r as Extract<CommitResult, { ok: false }>) }`,
+    (r, attempt) => r === null ? `retrying commit after error (${attempt}/${retries})` : `retrying commit (${attempt}/${retries}): ${commitFailureMessage(r as Extract<CommitResult, { ok: false }>) }`,
   ) as CommitResult | null;
   if (result === null) return false;
   if (!result.ok) {
@@ -446,17 +398,15 @@ async function sendStoredMessage(
   num: string,
   workingText: string,
   vars: Record<string, string> = {},
-  timeout?: number,
   scope: string = "",
   retries = 1,
 ): Promise<boolean> {
   const text = resolveMessageText(num, vars, ctx);
   if (text === null) return false;
-  const result = await retryWithTimeout(
+  const result = await retryWithBackoff(
     ctx,
     scope,
     retries,
-    timeout,
     async () => {
       ctx.ui.setWorkingMessage(workingText);
       const r = await sendAndWaitForTurn(pi, ctx, text);
@@ -466,7 +416,7 @@ async function sendStoredMessage(
     (r) => r === null || r === "failed",
     (r, attempt) => {
       if (r === null) ctx.ui.setWorkingMessage();
-      return r === null ? `retrying message ${num} after timeout (${attempt}/${retries})` : `retrying message ${num} (${attempt}/${retries})`;
+      return r === null ? `retrying message ${num} after error (${attempt}/${retries})` : `retrying message ${num} (${attempt}/${retries})`;
     },
   ) as SendResult | null;
   if (result === null) {
@@ -485,17 +435,16 @@ async function sendStoredMessage(
 }
 async function dispatchStep(pi: ExtensionAPI, ctx: ExtensionCommandContext, step: StartStep | LoopStep, vars: Record<string, string>, scope: string): Promise<boolean> {
   const retries = retriesFor(step);
-  const timeout = step.timeout;
   if (step.msg !== undefined) {
-    return sendStoredMessage(pi, ctx, step.msg, withWorkflowChain(`${scope}sending message ${step.msg}...`), vars, timeout, scope, retries);
+    return sendStoredMessage(pi, ctx, step.msg, withWorkflowChain(`${scope}sending message ${step.msg}...`), vars, scope, retries);
   }
   if (step.cmd !== undefined) {
-    return runStoredCommand(pi, ctx, step.cmd, withWorkflowChain(`${scope}running `), vars, timeout, scope, retries);
+    return runStoredCommand(pi, ctx, step.cmd, withWorkflowChain(`${scope}running `), vars, scope, retries);
   }
   if (step.workflow !== undefined) {
-    return runSubWorkflow(pi, ctx, step.workflow, vars, timeout, scope, retries);
+    return runSubWorkflow(pi, ctx, step.workflow, vars, scope);
   }
-  if (step.commit === true) return runCommitStep(pi, ctx, timeout, scope, retries);
+  if (step.commit === true) return runCommitStep(pi, ctx, scope, retries);
   return true;
 }
 
@@ -518,7 +467,7 @@ async function runOncePhase(
     }
     if (step.msg !== undefined) {
       const working = withWorkflowChain(`Sending message ${step.msg}...`);
-      if (!(await sendStoredMessage(pi, ctx, step.msg, working, vars, step.timeout, "", retriesFor(step)))) return false;
+      if (!(await sendStoredMessage(pi, ctx, step.msg, working, vars, "", retriesFor(step)))) return false;
     } else if (!(await dispatchStep(pi, ctx, step, vars, ""))) return false;
       if (!(await handleLengthContinuation(pi, ctx, ""))) return false;
   }
@@ -551,7 +500,7 @@ async function runPhases(
           return false;
         }
         if (step.tree !== undefined) {
-          if (!(await runTreeStep(ctx, scope, step.tree, step.timeout, retriesFor(step), vars))) return false;
+          if (!(await runTreeStep(ctx, scope, step.tree, retriesFor(step), vars))) return false;
           continue;
         }
         if (step.onlyIfChanges) {
@@ -607,7 +556,7 @@ async function runWorkflowPhases(
   return ok;
 }
 
-async function runSubWorkflow(pi: ExtensionAPI, ctx: ExtensionCommandContext, index: string, vars: Record<string, string> = {}, timeout?: number, scope: string = "", retries = 1): Promise<boolean> {
+async function runSubWorkflow(pi: ExtensionAPI, ctx: ExtensionCommandContext, index: string, vars: Record<string, string> = {}, scope: string = ""): Promise<boolean> {
   if (workflowStack.includes(index)) {
     ctx.ui.notify(`Circular workflow reference: ${[...workflowStack, index].join(" → ")}`, "error");
     return false;
@@ -625,18 +574,10 @@ async function runSubWorkflow(pi: ExtensionAPI, ctx: ExtensionCommandContext, in
   workflowStack.push(index);
   workflowLabels.push(`Workflow ${index}`);
   try {
-    const result = await retryWithTimeout(
-      ctx,
-      scope,
-      retries,
-      timeout,
-      () => runWorkflowPhases(pi, ctx, config, index, config.rounds, getMessages(), false, vars),
-      () => true,
-      (r) => r === null,
-      (r, attempt) => `retrying workflow ${index} after timeout (${attempt}/${retries})`,
-    ) as boolean | null;
-    if (result === null) return false;
-    return result;
+    return await runWorkflowPhases(pi, ctx, config, index, config.rounds, getMessages(), false, vars);
+  } catch (err) {
+    ctx.ui.notify(withWorkflowChain(`${scope}${errorMessage(err)}`), "error");
+    return false;
   } finally {
     workflowStack.pop();
     workflowLabels.pop();

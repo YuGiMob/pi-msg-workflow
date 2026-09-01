@@ -4,7 +4,7 @@ Numbered message and command stores plus configurable improvement workflows for 
 
 ## What you get
 
-- `/msg 3` sends message 3 as a follow-up. The store is a plain JSON file, editable with `/change-msg`, `/show-msg`, or the editor.
+- `/msg 3` sends message 3 as a follow-up. The store is a plain JSON file, editable with `/show-msg` or the editor.
 - `/cmd 1` runs command 1 via `pi.exec`. No shell, just a whitespace split with quoted-argument support.
 - `workflow.json` defines any number of numbered workflows (start phase, review loop, finally phase). `/workflow` runs workflow 1, `/workflow 2` runs workflow 2, and `/workflow 2 3` runs three review rounds of workflow 2. `/workflow dry` prints the plan without sending or executing anything.
 - `/workflow-edit` opens a three-tab overlay for the workflow, messages, and commands: add, edit, delete, reorder, and undo, with cross-tab reference checks on save.
@@ -38,10 +38,8 @@ The package ships with default messages (`1` to `17`), a default command (`1` = 
 | Command | Description |
 | --- | --- |
 | `/msg <number>` | Send a predefined message as a follow-up. |
-| `/change-msg <number> "<content>"` | Create or update a message (min 5 characters). |
 | `/show-msg [number]` | Display a message, or list all messages. |
 | `/cmd <number>` | Perform a predefined command. |
-| `/change-cmd <number> "<content>"` | Create or update a command (min 5 characters). |
 | `/show-cmd [number]` | Display a command, or list all commands. |
 | `/workflow [workflow] [rounds]` | Run a workflow (default `1`); `dry` or `--dry-run` prints the resolved plan; `list` lists the configured workflows. |
 | `/workflow-edit` | Open the interactive editor. |
@@ -130,7 +128,7 @@ Ordered steps repeated each round. `loop` is the first loop section; additional 
 | `{ "commit": true }` | Stage all changes and commit them with the agent's last response as the message when one was requested (e.g. by message 17), falling back to a message derived from the changed files. |
 
 `onlyIfChanges` runs `git status --porcelain` in the project directory, so it requires the project to be a git repository. A msg, cmd, or workflow step with `onlyIfChanges` is skipped when there are no changes.
-Message indices refer to the numbered message store: `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store: `/cmd 1`, `/change-cmd 1 "git add ."`, and `{ "cmd": "1" }` all address the same command. The default message store is numbered `1` to `17`: `1` to `7` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix), `9` to `15` serve workflow 2 (combined review, value check, implement, closer look, fix, validate, summarize), `16` serves workflow 4 (online research), and `17` requests the commit message in all default workflows.
+Message indices refer to the numbered message store: `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store: `/cmd 1` and `{ "cmd": "1" }` address the same command. The default message store is numbered `1` to `17`: `1` to `7` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix), `9` to `15` serve workflow 2 (combined review, value check, implement, closer look, fix, validate, summarize), `16` serves workflow 4 (online research), and `17` requests the commit message in all default workflows.
 
 #### `finally`
 
@@ -213,13 +211,12 @@ Each user copy is tracked against the checksum of the packaged default it was sy
 ## Limitations
 
 - Command content is split on whitespace (single- and double-quoted arguments supported) and executed directly. Pipes, `&&`, `||`, and redirection are not supported; use one command per step or a script.
-- Content with double quotes in `/change-msg` and `/change-cmd` must be wrapped in single quotes, e.g. `/change-msg 3 'say "hi"'`. Escaped quotes are only supported inside stored command content, not in the change commands.
 - The start phase skips msg steps whose text matches the leading user messages of the session, in order, stopping at the first non-matching user message. A message you typed manually with identical text counts as already sent. cmd steps always re-run.
 - `/workflow` refuses to start while another workflow is running. `/workflow-stop` reports when no workflow is running.
 
 ## Troubleshooting
 
-- `"Message N does not exist."` Create it with `/change-msg N "content"`, in the editor's Messages tab, or run `/workflow-reset` to restore the default stores.
+- `"Message N does not exist."` Create it in the editor's Messages tab, or run `/workflow-reset` to restore the default stores.
 - `"Workflow N does not exist."` The number is not in `workflow.json`. `/workflow` runs the default workflow 1; create other workflows in the editor with `w` or add them to `workflow.json` directly.
 - The workflow refuses to start. Another workflow is running; use `/workflow-stop` to cancel it after the current step.
 - The editor refuses to save. The Workflow tab references messages, commands, or workflows that don't exist yet: add and save them in the Messages/Commands tabs first (create missing workflows with `w`). The save would create a circular workflow reference: break the cycle in the referenced workflow first. The Messages/Commands tabs refuse to delete a message or command still referenced by the workflow: drop those references in the Workflow tab first.
