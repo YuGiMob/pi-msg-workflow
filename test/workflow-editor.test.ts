@@ -102,6 +102,10 @@ function type(tab: { handleInput(data: string): boolean }, text: string): void {
   for (const ch of text) tab.handleInput(ch);
 }
 
+function clearInput(tab: { handleInput(data: string): boolean }, length: number): void {
+  for (let i = 0; i < length; i++) tab.handleInput("\x7f");
+}
+
 function createTheme() {
   return {
     fg: vi.fn((_color: string, text: string) => text),
@@ -1180,14 +1184,39 @@ describe("MessagesTab", () => {
 
   it("edits a message", () => {
     tab.handleInput("e");
+    clearInput(tab, MSG1.length);
     type(tab, "New content here");
     tab.handleInput("\r");
     expect(tab.draft["1"]).toBe("New content here");
     expect(tab.dirty).toBe(true);
   });
 
+  it("pre-fills the current content so it can be edited in place", () => {
+    tab.handleInput("e");
+    tab.handleInput("\x7f");
+    tab.handleInput("\r");
+    expect(tab.draft["1"]).toBe(MSG1.slice(0, -1));
+    expect(tab.dirty).toBe(true);
+  });
+
+  it("places the cursor at the end of the pre-filled content", () => {
+    tab.handleInput("e");
+    expect(tab.getInputLines(80)![0]).toContain(`${MSG1}▏`);
+  });
+
+  it("does not mark the tab dirty when the pre-filled content is committed unchanged", () => {
+    const popup = vi.fn();
+    tab.setPopup(popup);
+    tab.handleInput("e");
+    tab.handleInput("\r");
+    expect(tab.draft["1"]).toBe(MSG1);
+    expect(tab.dirty).toBe(false);
+    expect(popup).not.toHaveBeenCalled();
+  });
+
   it("rejects short content", () => {
     tab.handleInput("e");
+    clearInput(tab, MSG1.length);
     type(tab, "ab");
     tab.handleInput("\r");
     expect(tab.draft["1"]).toBe(MSG1);
@@ -1196,6 +1225,7 @@ describe("MessagesTab", () => {
 
   it("keeps the input open when the commit is rejected", () => {
     tab.handleInput("e");
+    clearInput(tab, MSG1.length);
     type(tab, "ab");
     tab.handleInput("\r");
     expect(tab.draft["1"]).toBe(MSG1);
@@ -1265,6 +1295,7 @@ describe("MessagesTab", () => {
 
   it("pastes multi-character content into the input", () => {
     tab.handleInput("e");
+    clearInput(tab, MSG1.length);
     tab.handleInput("\x1b[200~Pasted message content\x1b[201~");
     tab.handleInput("\r");
     expect(tab.draft["1"]).toBe("Pasted message content");
@@ -1273,6 +1304,7 @@ describe("MessagesTab", () => {
 
   it("flattens line breaks in pasted content", () => {
     tab.handleInput("e");
+    clearInput(tab, MSG1.length);
     tab.handleInput("\x1b[200~line one\nline two\x1b[201~");
     tab.handleInput("\r");
     expect(tab.draft["1"]).toBe("line one line two");
@@ -1313,6 +1345,7 @@ describe("MessagesTab", () => {
 
   it("inserts at the cursor position with arrow keys", () => {
     tab.handleInput("e");
+    clearInput(tab, MSG1.length);
     type(tab, "abcde");
     tab.handleInput("\x1b[D");
     tab.handleInput("\x1b[D");
@@ -1322,6 +1355,7 @@ describe("MessagesTab", () => {
   });
   it("moves the cursor with home and end", () => {
     tab.handleInput("e");
+    clearInput(tab, MSG1.length);
     type(tab, "bcdef");
     tab.handleInput("\x1b[H");
     type(tab, "a");
@@ -1332,6 +1366,7 @@ describe("MessagesTab", () => {
   });
   it("deletes at the cursor with delete and backspace", () => {
     tab.handleInput("e");
+    clearInput(tab, MSG1.length);
     type(tab, "abcdefg");
     tab.handleInput("\x1b[H");
     tab.handleInput("\x1b[3~");
@@ -1357,6 +1392,7 @@ describe("MessagesTab", () => {
   });
   it("undoes an edited message", () => {
     tab.handleInput("e");
+    clearInput(tab, MSG1.length);
     type(tab, "New content here");
     tab.handleInput("\r");
     expect(tab.draft["1"]).toBe("New content here");
@@ -1379,6 +1415,7 @@ describe("MessagesTab", () => {
   });
   it("keeps the tab dirty when undoing past a save", () => {
     tab.handleInput("e");
+    clearInput(tab, MSG1.length);
     type(tab, "New content here");
     tab.handleInput("\r");
     tab.save();
@@ -1389,6 +1426,7 @@ describe("MessagesTab", () => {
 
   it("types Kitty CSI-u characters into the input", () => {
     tab.handleInput("e");
+    clearInput(tab, MSG1.length);
     tab.handleInput("\x1b[97;1u");
     tab.handleInput("\x1b[98;1u");
     tab.handleInput("\x1b[99;1u");
@@ -1493,6 +1531,7 @@ describe("CommandsTab", () => {
 
   it("edits a command", () => {
     tab.handleInput("e");
+    clearInput(tab, COMMANDS["1"].length);
     type(tab, "git add src");
     tab.handleInput("\r");
     expect(tab.draft["1"]).toBe("git add src");
@@ -1501,10 +1540,19 @@ describe("CommandsTab", () => {
 
   it("rejects short content", () => {
     tab.handleInput("e");
+    clearInput(tab, COMMANDS["1"].length);
     type(tab, "ab");
     tab.handleInput("\r");
     expect(tab.draft["1"]).toBe(COMMANDS["1"]);
     expect(tab.getAboveContentLine(80)[0]).toContain("at least 5 characters");
+  });
+
+  it("pre-fills the current command content", () => {
+    tab.handleInput("e");
+    tab.handleInput("\x7f");
+    tab.handleInput("\r");
+    expect(tab.draft["1"]).toBe("git add");
+    expect(tab.dirty).toBe(true);
   });
 
   it("adds a command with the next free index", () => {

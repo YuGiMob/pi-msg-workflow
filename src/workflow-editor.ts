@@ -232,8 +232,8 @@ abstract class BaseEditorTab implements EditorTab {
     this.popup(this.dirty ? "Undone (press s to save)" : "Undone");
   }
 
-  protected startInput(prompt: string, commit: (value: string) => string | null): void {
-    this.input = { prompt, buffer: "", cursor: 0, commit };
+  protected startInput(prompt: string, commit: (value: string) => string | null, initial = ""): void {
+    this.input = { prompt, buffer: initial, cursor: initial.length, commit };
     this.inputListener?.(true);
   }
 
@@ -1064,12 +1064,17 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
       return;
     }
     const key = this.keys[this.selection]!;
-    this.commitInput(`content for ${this.noun.toLowerCase()} ${key} (current: ${truncate(this.draft[key]!, 30)}): `, (value) => {
-      return value.length >= 5 ? null : `${this.noun} must be at least 5 characters.`;
-    }, (value) => {
-      this.draft[key] = value;
-      this.popup(`${this.noun} ${key} updated. Press s to save.`);
-    });
+    const current = this.draft[key]!;
+    this.startInput(`content for ${this.noun.toLowerCase()} ${key}: `, (value) => {
+      const trimmed = value.trim();
+      if (trimmed.length < 5) return `${this.noun} must be at least 5 characters.`;
+      if (trimmed === current) return null;
+      this.mutate(() => {
+        this.draft[key] = trimmed;
+        this.popup(`${this.noun} ${key} updated. Press s to save.`);
+      });
+      return null;
+    }, current);
   }
 
   private addEntry(): void {
