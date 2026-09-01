@@ -182,11 +182,29 @@ function parseRounds(args: string, fallback: number): number {
   return Math.min(value, MAX_ROUNDS);
 }
 
+let escListenerSetup = false;
+function setupEscListener(): void {
+  if (escListenerSetup) return;
+  escListenerSetup = true;
+  try {
+    if (typeof process === "undefined" || !process.stdin?.isTTY) return;
+    if ((process.env as unknown as Record<string, unknown>)["VITEST"] || (process.env as unknown as Record<string, unknown>)["NODE_ENV"] === "test") return;
+    process.stdin.on("data", (data: Buffer | string) => {
+      if (!isWorkflowRunning()) return;
+      const buf = typeof data === "string" ? Buffer.from(data, "utf-8") : data;
+      if (buf.length === 1 && buf[0] === 0x1b) {
+        requestWorkflowStop();
+      }
+    });
+  } catch {}
+}
+
 function notifyConfigErrors(ctx: ExtensionCommandContext, errors: string[]): void {
   if (errors.length > 0) {
     ctx.ui.notify(["[pi-msg-workflow]", ...errors].join("\n"), "warning");
   }
 }
+
 
 export default function (pi: ExtensionAPI) {
   registerSendCommand(pi, "msg");
@@ -195,20 +213,7 @@ export default function (pi: ExtensionAPI) {
   registerPerformCommand(pi, "cmd");
   registerChangeCommand(pi, "cmd", getCommands, setCommands, "Command", COMMANDS_FILE);
   registerShowCommand(pi, "cmd", getCommands, "Command");
-  if (typeof (pi as unknown as Record<string, unknown>)["registerShortcut"] === "function") {
-    (pi as unknown as { registerShortcut: (a: string, b: unknown) => void }).registerShortcut("escape", {
-      description: "Stop running workflow",
-      handler: async (ctx) => {
-        if (isWorkflowRunning()) {
-          requestWorkflowStop();
-          ctx.ui.notify("Workflow stop requested. It will stop after the current step", "info");
-          if (!ctx.isIdle()) (ctx as unknown as { abort?: () => void }).abort?.();
-        } else if (!ctx.isIdle()) {
-          (ctx as unknown as { abort?: () => void }).abort?.();
-        }
-      },
-    });
-  }
+  setupEscListener();
 
   pi.registerCommand("workflow-edit", {
     description:

@@ -17,6 +17,9 @@ function retryDelay(attempt: number): number {
   return Math.min(RETRY_DELAY_MS * 2 ** (attempt - 1), RETRY_MAX_DELAY_MS);
 }
 let workflowStopRequested = false;
+function isStopRequested(ctx?: any): boolean {
+  return workflowStopRequested || !!ctx?.signal?.aborted;
+}
 let workflowRunning = false;
 const workflowStack: string[] = [];
 const workflowLabels: string[] = [];
@@ -117,17 +120,17 @@ function retriesFor(step: { retries?: number }): number {
   return step.retries ?? 1;
 }
 
-async function delayWithStopCheck(ms: number): Promise<boolean> {
+async function delayWithStopCheck(ms: number, ctx?: { signal?: AbortSignal | null }): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < ms) {
-    if (workflowStopRequested) return false;
+    if (isStopRequested(ctx)) return false;
     await new Promise((resolve) => setTimeout(resolve, Math.min(50, Math.max(0, ms - (Date.now() - start)))));
   }
   return true;
 }
 async function notifyRetry(ctx: ExtensionCommandContext, scope: string, message: string, attempt: number): Promise<boolean> {
   ctx.ui.notify(withWorkflowChain(`${scope}${message}`), "warning");
-  return delayWithStopCheck(retryDelay(attempt));
+  return delayWithStopCheck(retryDelay(attempt), ctx);
 }
 async function retryWithTimeout<T>(ctx: ExtensionCommandContext, scope: string, retries: number, timeout: number | undefined, task: () => Promise<T>, isSuccess: (result: T) => boolean, isRetryable: (result: T | null) => boolean, retryMessage: (result: T | null, attempt: number, retries: number) => string): Promise<T | null> {
   for (let attempt = 1; attempt <= retries; attempt++) {
@@ -136,21 +139,21 @@ async function retryWithTimeout<T>(ctx: ExtensionCommandContext, scope: string, 
       result = await withStepTimeout(task(), timeout, ctx, scope) as T | null;
     } catch (err) {
       ctx.ui.notify(withWorkflowChain(`${scope}${errorMessage(err)}`), "error");
-      if (isRetryable(null) && attempt < retries && !workflowStopRequested) {
+      if (isRetryable(null) && attempt < retries && !isStopRequested(ctx)) {
         if (!(await notifyRetry(ctx, scope, retryMessage(null, attempt, retries), attempt))) return null;
         continue;
       }
       return null;
     }
     if (result === null) {
-      if (isRetryable(null) && attempt < retries && !workflowStopRequested) {
+      if (isRetryable(null) && attempt < retries && !isStopRequested(ctx)) {
         if (!(await notifyRetry(ctx, scope, retryMessage(null, attempt, retries), attempt))) return null;
         continue;
       }
       return null;
     }
     if (isSuccess(result)) return result;
-    if (isRetryable(result) && attempt < retries && !workflowStopRequested) {
+    if (isRetryable(result) && attempt < retries && !isStopRequested(ctx)) {
       if (!(await notifyRetry(ctx, scope, retryMessage(result, attempt, retries), attempt))) return null;
       continue;
     }
@@ -205,7 +208,7 @@ async function sendAndWaitForTurn(
 ): Promise<SendResult> {
   let previousCount = -1;
   for (let attempt = 0; attempt < SEND_MAX_ATTEMPTS; attempt++) {
-    if (workflowStopRequested) return "cancelled";
+    if (isStopRequested(ctx)) return "cancelled";
     const before = countUserTextMatches(ctx.sessionManager.getBranch(), text);
     if (previousCount !== -1 && before > previousCount) {
       await ctx.waitForIdle();
@@ -223,7 +226,7 @@ async function sendAndWaitForTurn(
         await ctx.waitForIdle();
         return "sent";
       }
-      if (workflowStopRequested) return "cancelled";
+      if (isStopRequested(ctx)) return "cancelled";
       if (!ctx.isIdle()) {
         await ctx.waitForIdle();
         if (countUserTextMatches(ctx.sessionManager.getBranch(), text) > before) return "sent";
@@ -301,7 +304,7 @@ async function runTreeStep(ctx: ExtensionCommandContext, scope: string, tree: st
         } catch (err) {
           ctx.ui.setWorkingMessage();
           ctx.ui.notify(`Could not navigate: ${errorMessage(err)}`, "error");
-          if (attempt < retries && !workflowStopRequested) {
+          if (attempt < retries && !isStopRequested(ctx)) {
             if (!(await notifyRetry(ctx, scope, `retrying new session after error (${attempt}/${retries})`, attempt))) return false;
             continue;
           }
@@ -309,7 +312,7 @@ async function runTreeStep(ctx: ExtensionCommandContext, scope: string, tree: st
         }
         if (result === null) {
           ctx.ui.setWorkingMessage();
-          if (attempt < retries && !workflowStopRequested) {
+          if (attempt < retries && !isStopRequested(ctx)) {
             if (!(await notifyRetry(ctx, scope, `retrying new session after timeout (${attempt}/${retries})`, attempt))) return false;
             continue;
           }
@@ -329,7 +332,7 @@ async function runTreeStep(ctx: ExtensionCommandContext, scope: string, tree: st
     const status = await withStepTimeout(task, timeout, ctx, scope);
     if (status === null) {
       ctx.ui.setWorkingMessage();
-      if (attempt < retries && !workflowStopRequested) {
+      if (attempt < retries && !isStopRequested(ctx)) {
         if (!(await notifyRetry(ctx, scope, `retrying context reset to ${tree} after timeout (${attempt}/${retries})`, attempt))) return false;
         continue;
       }
@@ -338,7 +341,7 @@ async function runTreeStep(ctx: ExtensionCommandContext, scope: string, tree: st
     const navigated = notifyNavigationStatus(ctx, tree, status as TreeNavigationStatus, "Workflow cancelled", "error");
     ctx.ui.setWorkingMessage();
     if (!navigated) {
-      if (attempt < retries && !workflowStopRequested && status === "failed") {
+      if (attempt < retries && !isStopRequested(ctx) && status === "failed") {
         if (!(await notifyRetry(ctx, scope, `retrying context reset to ${tree} (${attempt}/${retries})`, attempt))) return false;
         continue;
       }
@@ -368,7 +371,7 @@ async function checkForChanges(pi: ExtensionAPI, ctx: ExtensionCommandContext, s
 }
 async function handleLengthContinuation(pi: ExtensionAPI, ctx: ExtensionCommandContext, scope: string): Promise<boolean> {
   for (let i = 0; i < 3; i++) {
-    if (workflowStopRequested) return false;
+    if (isStopRequested(ctx)) return false;
     const reason = lastAssistantStopReason(ctx.sessionManager.getBranch());
     if (reason !== "length") return true;
     ctx.ui.setWorkingMessage(withWorkflowChain(`${scope}sending continuation for truncated output...`));
@@ -505,7 +508,7 @@ async function runOncePhase(
 ): Promise<boolean> {
   let skipped = 0;
   for (const step of steps) {
-    if (workflowStopRequested) {
+    if (isStopRequested(ctx)) {
       ctx.ui.notify("Workflow stopped", "info");
       return false;
     }
@@ -543,7 +546,7 @@ async function runPhases(
       let roundHasConditional = false;
       let roundExecutedConditional = false;
       for (const step of section) {
-        if (workflowStopRequested) {
+        if (isStopRequested(ctx)) {
           ctx.ui.notify("Workflow stopped", "info");
           return false;
         }
@@ -598,7 +601,7 @@ async function runWorkflowPhases(
   });
   const matched = countPhaseMatches(ctx.sessionManager.getBranch(), startMsgs, leading);
   const ok = await runPhases(pi, ctx, config, index, rounds, matched, vars);
-  if (!ok && config.finallyOnError && !workflowStopRequested) {
+  if (!ok && config.finallyOnError && !isStopRequested(ctx)) {
     await runOncePhase(pi, ctx, config.finally, 0, vars);
   }
   return ok;
