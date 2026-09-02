@@ -21,5 +21,11 @@
   "20": "Implement tests for all of the coverage gaps worth closing. Follow the existing test conventions of this project, keep each test focused on one behavior, and make sure each test would fail if the implementation were broken and pass on good inputs. Do not modify production code",
   "21": "Take a closer look at the tests you just wrote via 'git diff --staged'. Check that each test isolates one behavior, asserts the right outcome, would fail on bad inputs, and does not rely on overly broad mocks or flaky patterns. Look for missing assertions and tests that do not actually verify the behavior they claim to",
   "22": "If your review found any issues with the staged tests, fix them now",
-  "23": "Take a look at the git status and git diff to validate that the tests you wanted to write are the same as the tests you actually did"
+  "23": "Take a look at the git status and git diff to validate that the tests you wanted to write are the same as the tests you actually did",
+  "24": "Look through the codebase for bugs: incorrect logic, off-by-one errors, missing error handling, null and undefined handling, race conditions, resource leaks, unhandled edge cases, and type mismatches. For each finding, note the file, the specific location, and why it would actually fail in production",
+  "25": "Are these bugs actually real and worth fixing? Check whether each bug is reproducible, whether it impacts real usage, whether it is a false positive or theoretical edge case that cannot happen, and whether the fix risk outweighs the bug. Only bugs that are real, reachable, and worth the change are worth fixing",
+  "26": "Fix all of the bugs worth fixing. Keep each fix minimal and focused on the bug itself, do not refactor unrelated code, and preserve existing behavior for correct inputs",
+  "27": "Take a closer look at the bug fixes you just made via 'git diff --staged'. Check that each fix actually addresses the bug, does not introduce new bugs, handles edge cases correctly, and does not change behavior for correct inputs. Look for incomplete fixes and regressions",
+  "28": "If your review found any issues with the staged bug fixes, fix them now",
+  "29": "Take a look at the git status and git diff to validate that the bug fixes you wanted to make are the same as the bug fixes you actually did"
 }
