@@ -76,5 +76,28 @@
       { "msg": "17", "retries": 2 },
       { "commit": true, "retries": 2 }
     ]
+  },
+  "5": {
+    "rounds": 2,
+    "stopAfterEmpty": 1,
+    "start": [
+      { "msg": "1" },
+      { "msg": "18" },
+      { "msg": "19" },
+      { "msg": "20" }
+    ],
+    "loop": [
+      { "tree": "1", "retries": 2 },
+      { "cmd": "1", "retries": 2 },
+      { "msg": "21", "retries": 2 },
+      { "msg": "22", "retries": 2 },
+      { "cmd": "2", "onlyIfChanges": true, "retries": 2 },
+      { "msg": "23", "onlyIfChanges": true, "retries": 2 },
+      { "cmd": "1", "onlyIfChanges": true, "retries": 2 }
+    ],
+    "finally": [
+      { "msg": "17", "retries": 2 },
+      { "commit": true, "retries": 2 }
+    ]
   }
 }

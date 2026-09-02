@@ -31,7 +31,7 @@ pi install npm:pi-msg-workflow
 /workflow
 ```
 
-The package ships with default messages (`1` to `17`), a default command (`1` = `git add .`), and four workflows.
+The package ships with default messages (`1` to `23`), default commands (`1` = `git add .`, `2` = `npm test`), and five workflows.
 
 ## Commands
 
@@ -128,7 +128,7 @@ Ordered steps repeated each round. `loop` is the first loop section; additional 
 | `{ "commit": true }` | Stage all changes and commit them with the agent's last response as the message when one was requested (e.g. by message 17), falling back to a message derived from the changed files. |
 
 `onlyIfChanges` runs `git status --porcelain` in the project directory, so it requires the project to be a git repository. A msg, cmd, or workflow step with `onlyIfChanges` is skipped when there are no changes.
-Message indices refer to the numbered message store: `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store: `/cmd 1` and `{ "cmd": "1" }` address the same command. The default message store is numbered `1` to `17`: `1` to `7` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix), `9` to `15` serve workflow 2 (combined review, value check, implement, closer look, fix, validate, summarize), `16` serves workflow 4 (online research), and `17` requests the commit message in all default workflows.
+Message indices refer to the numbered message store: `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store: `/cmd 1` and `{ "cmd": "1" }` address the same command. The default message store is numbered `1` to `23`: `1` to `7` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix), `9` to `15` serve workflow 2 (combined review, value check, implement, closer look, fix, validate, summarize), `16` serves workflow 4 (online research), `18` to `23` serve workflow 5 (test-coverage gaps, value check, implement tests, closer look at tests, fix, validate), and `17` requests the commit message in all default workflows.
 
 #### `finally`
 
@@ -173,6 +173,24 @@ Workflow 3 runs two contained workflows per round: workflow 4 (online research, 
 
 Workflow 4 is the exploration workflow contained in workflow 3. Its start phase reads the codebase, searches the web for similar projects with similar features, checks whether the proposed improvements are worth implementing, and implements them. Its loop is the same review loop as workflow 1 (closer look, fix, validate, stage), and its finally phase asks for a commit message (message 17) and commits with the agent's response as the literal message.
 
+
+### Workflow 5: test coverage
+
+Workflow 5 is a focused test-coverage loop that finds gaps, judges value, writes tests, and reviews them. It shares the read-the-codebase step (message 1) with workflows 1 and 2 and treats tests as the only output — production code is not modified:
+
+| Step | Meaning |
+| --- | --- |
+| `{ "msg": "1" }` | Read the entirety of the codebase (shared with workflows 1 and 2; skipped when it already matches the leading user messages of the session). |
+| `{ "msg": "18" }` | Find test coverage gaps: untested modules and functions, missing edge cases, tests that only assert happy paths, and critical paths without tests — especially around data transformations, error handling, and boundary conditions. |
+| `{ "msg": "19" }` | Value check: are the test coverage gaps actually worth closing? |
+| `{ "msg": "20" }` | Implement tests for the gaps worth closing, following the existing test conventions and keeping each test focused on one behavior. |
+| `{ "msg": "21" }` | Take a closer look at the staged tests via `git diff --staged` (isolated behavior, correct assertions, would fail on bad inputs, no overly broad mocks or flaky patterns). |
+| `{ "msg": "22" }` | If the review found any issues with the staged tests, fix them now. |
+| `{ "cmd": "2", "onlyIfChanges": true }` | Run the test suite (`npm test`) only when there are changes, to verify the new tests pass. |
+| `{ "msg": "23", "onlyIfChanges": true }` | Validate the git status and git diff only when there are changes. |
+| `{ "cmd": "1", "onlyIfChanges": true }` | Stage the changes only when there are changes. |
+
+The tree step resets the context to the response of message 1, the shared read-the-codebase step. Its finally phase asks for a commit message (message 17) and commits with the agent's response as the literal message, like workflows 1, 2, and 4.
 ## The editor
 
 `/workflow-edit` opens an overlay with three tabs: `[Workflow]` (workflow number, rounds, start/loop/finally steps, tree anchor, add/delete/reorder, if-changes toggle, finally-on-error toggle, workflow switching and deletion), `[Messages]` and `[Commands]` (add, edit, delete store entries). Changes are saved per tab with `s`; closing with unsaved changes asks for confirmation.

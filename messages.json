@@ -15,5 +15,11 @@
   "14": "Take a look at the git status and git diff to validate that the changes you wanted to make are the same as the changes you actually did",
   "15": "Since the last commit a couple of changes were made to this codebase. Summarize all of the changes so far",
   "16": "Search the web for similar projects with similar features and identify improvements that could be applied to this codebase",
-  "17": "How would a commit look like for these past changes? Your next response will be used as the literal commit message"
+  "17": "How would a commit look like for these past changes? Your next response will be used as the literal commit message",
+  "18": "Look through the codebase for test coverage gaps: untested modules and functions, missing edge cases, tests that only assert happy paths, and critical paths without tests. Focus on behavior that would break silently without a test, especially around data transformations, error handling, and boundary conditions. For each gap, note the file and the specific behavior that is missing a test",
+  "19": "Are these test coverage gaps actually worth closing? Consider the risk if the behavior broke, the cost of writing and maintaining the test, and whether the behavior is already covered indirectly. Only gaps where a test would catch a real regression are worth closing",
+  "20": "Implement tests for all of the coverage gaps worth closing. Follow the existing test conventions of this project, keep each test focused on one behavior, and make sure each test would fail if the implementation were broken and pass on good inputs. Do not modify production code",
+  "21": "Take a closer look at the tests you just wrote via 'git diff --staged'. Check that each test isolates one behavior, asserts the right outcome, would fail on bad inputs, and does not rely on overly broad mocks or flaky patterns. Look for missing assertions and tests that do not actually verify the behavior they claim to",
+  "22": "If your review found any issues with the staged tests, fix them now",
+  "23": "Take a look at the git status and git diff to validate that the tests you wanted to write are the same as the tests you actually did"
 }
