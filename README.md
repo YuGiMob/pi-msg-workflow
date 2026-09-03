@@ -31,7 +31,7 @@ pi install npm:pi-msg-workflow
 /workflow
 ```
 
-The package ships with default messages (`1` to `28`), default commands (`1` = `git add .`, `2` = `npm test`), and six workflows.
+The package ships with default messages (`1` to `29`), default commands (`1` = `git add .`, `2` = `npm test` as a Node example), and six workflows. The default workflows are language-agnostic: test suites run via message `29`, which asks the agent to use the appropriate command for the project, so no workflow step assumes `npm test`. Customize command `2` per project if you use `/cmd 2` directly.
 
 ## Commands
 
@@ -128,7 +128,7 @@ Ordered steps repeated each round. `loop` is the first loop section; additional 
 | `{ "commit": true }` | Stage all changes and commit them with the agent's last response as the message when one was requested (e.g. by message 17), falling back to a message derived from the changed files. |
 
 `onlyIfChanges` runs `git status --porcelain` in the project directory, so it requires the project to be a git repository. A msg, cmd, or workflow step with `onlyIfChanges` is skipped when there are no changes.
-Message indices refer to the numbered message store: `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store: `/cmd 1` and `{ "cmd": "1" }` address the same command. The default message store is numbered `1` to `28`: `1` to `7` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix), `9` to `15` serve workflow 2 (combined review, value check, implement, closer look, fix, validate, summarize), `16` serves workflow 4 (online research), `18` to `23` serve workflow 5 (test-coverage gaps, value check, implement tests, closer look at tests, fix, validate), `24` to `28` serve workflow 6 (bug hunt, real-bug check, fix bugs, closer look at fixes, fix), and `5`/`17` are shared for validation and commit messages across all default workflows.
+Message indices refer to the numbered message store: `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store: `/cmd 1` and `{ "cmd": "1" }` address the same command. The default message store is numbered `1` to `29`: `1` to `7` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix), `9` to `15` serve workflow 2 (combined review, value check, implement, closer look, fix, validate, summarize), `16` serves workflow 4 (online research), `18` to `23` serve workflow 5 (test-coverage gaps, value check, implement tests, closer look at tests, fix, validate), `24` to `28` serve workflow 6 (bug hunt, real-bug check, fix bugs, closer look at fixes, fix), and `5`/`17`/`29` are shared for validation, commit messages, and test-suite runs across all default workflows.
 
 #### `finally`
 
@@ -186,7 +186,7 @@ Workflow 5 is a focused test-coverage loop that finds gaps, judges value, writes
 | `{ "msg": "20" }` | Implement tests for the gaps worth closing, following the existing test conventions and keeping each test focused on one behavior. |
 | `{ "msg": "21" }` | Take a closer look at the changes that I did with another agent to write a test via `git diff --staged` (isolated behavior, correct assertions, would fail on bad inputs, no overly broad mocks or flaky patterns). |
 | `{ "msg": "22" }` | If the review found any issues with the staged changes that another agent made to write a test, fix them now. |
-| `{ "cmd": "2", "onlyIfChanges": true }` | Run the test suite (`npm test`) only when there are changes, to verify the new tests pass. |
+| `{ "msg": "29", "onlyIfChanges": true }` | Run the test suite with the appropriate command for the project (for example `npm test`, `pytest`, `cargo test`, `go test ./...`) only when there are changes, to verify the new tests pass. |
 | `{ "msg": "23", "onlyIfChanges": true }` | Validate the git status and git diff only when there are changes. |
 | `{ "cmd": "1", "onlyIfChanges": true }` | Stage the changes only when there are changes. |
 
@@ -204,7 +204,7 @@ Workflow 6 is a focused bug-fixing loop that hunts bugs, judges whether they are
 | `{ "msg": "26" }` | Fix the real bugs worth fixing, keeping each fix minimal and preserving behavior for correct inputs. |
 | `{ "msg": "27" }` | Take a closer look at the changes that I did with another agent to fix a bug via `git diff --staged` (does the fix address a bug, no new bugs, edge cases handled, no regressions). |
 | `{ "msg": "28" }` | If the review found any issues with the staged changes that another agent made to fix a bug, fix them now. |
-| `{ "cmd": "2", "onlyIfChanges": true }` | Run the test suite (`npm test`) only when there are changes, to ensure fixes do not break existing tests. |
+| `{ "msg": "29", "onlyIfChanges": true }` | Run the test suite with the appropriate command for the project (for example `npm test`, `pytest`, `cargo test`, `go test ./...`) only when there are changes, to ensure fixes do not break existing tests. |
 | `{ "msg": "5", "onlyIfChanges": true }` | Validate the git status and git diff only when there are changes (reuses the generic validation message). |
 | `{ "cmd": "1", "onlyIfChanges": true }` | Stage the changes only when there are changes. |
 
