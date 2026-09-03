@@ -214,7 +214,7 @@ describe("workflow extension", () => {
   it("registers the workflow, tree-jump and workflow-reset commands", () => {
     expect(commands["workflow"]).toBeDefined();
     expect(commands["tree-jump"]).toBeDefined();
-    expect(commands["workflow-stop"]).toBeUndefined();
+    expect(commands["workflow-stop"]).toBeDefined();
     expect(commands["workflow-reset"]).toBeDefined();
   });
 

@@ -61,13 +61,14 @@ export async function runCommand(
   command: string,
   workingText: string,
   ui: { setWorkingMessage(message?: string): void },
+  signal?: AbortSignal,
 ): Promise<CommandResult> {
   const parts = splitCommand(command);
   if (parts === null) return { ok: false, reason: "unterminated", stderr: "" };
   if (parts.length === 0 || parts[0] === "") return { ok: false, reason: "empty", stderr: "" };
   ui.setWorkingMessage(workingText);
   try {
-    const result = await pi.exec(parts[0]!, parts.slice(1));
+    const result = signal === undefined ? await pi.exec(parts[0]!, parts.slice(1)) : await pi.exec(parts[0]!, parts.slice(1), { signal });
     if (result.code !== 0) return { ok: false, reason: "failed", stderr: result.stderr, stdout: result.stdout };
     return { ok: true };
   } catch (err) {

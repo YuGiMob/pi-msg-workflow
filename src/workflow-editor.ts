@@ -849,6 +849,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
     if (issues.missingWorkflows.length > 0) return `Missing workflows: ${issues.missingWorkflows.join(", ")}. Create and save them first (press w to switch).`;
     if (issues.cycle !== null) return `Circular workflow reference: ${issues.cycle.join(" → ")}. Break the cycle in the referenced workflow first.`;
     if (issues.hasBadSection) return `The first step of every loop section must be a tree step (context reset)`;
+    if (config.stopAfterEmpty !== undefined && config.stopAfterEmpty > config.rounds) return `Early-exit must be <= rounds (${config.rounds}). Lower the early-exit value or raise rounds.`;
     if (config.stopAfterEmpty !== undefined && !loopSections(config).flat().some((step) => step.onlyIfChanges)) return `Early-exit is set but no step uses [if-changes] — it will never trigger`;
     return null;
   }

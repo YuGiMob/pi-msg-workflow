@@ -311,7 +311,7 @@ async function checkForChanges(pi: ExtensionAPI, ctx: ExtensionCommandContext, s
   ctx.ui.setWorkingMessage(withWorkflowChain(`${scope}checking for changes...`));
   let statusResult: ExecResult;
   try {
-    statusResult = await pi.exec("git", ["status", "--porcelain"]);
+    statusResult = ctx.signal === undefined || ctx.signal === null ? await pi.exec("git", ["status", "--porcelain"]) : await pi.exec("git", ["status", "--porcelain"], { signal: ctx.signal });
   } catch (err) {
     ctx.ui.notify(`git status --porcelain failed: ${errorMessage(err)}`, "error");
     return null;
@@ -360,7 +360,7 @@ async function runStoredCommand(
     ctx,
     scope,
     retries,
-    () => runCommand(pi, command, `${prefix}${command}...`, ctx.ui),
+    () => runCommand(pi, command, `${prefix}${command}...`, ctx.ui, ctx.signal ?? undefined),
     (r) => r.ok,
     (r) => r === null || (!r.ok && r.reason !== "empty" && r.reason !== "unterminated"),
     (r, attempt) => r === null ? `retrying command ${num} after error (${attempt}/${retries})` : `retrying command ${num} (${attempt}/${retries}): ${commandFailureMessage(num, r as Extract<CommandResult, { ok: false }>) }`,
@@ -378,7 +378,7 @@ async function runCommitStep(pi: ExtensionAPI, ctx: ExtensionCommandContext, sco
     ctx,
     scope,
     retries,
-    () => runCommit(pi, ctx.ui, lastAssistantMessageText(ctx.sessionManager.getBranch()), withWorkflowChain(`${scope}Committing changes...`)),
+    () => runCommit(pi, ctx.ui, lastAssistantMessageText(ctx.sessionManager.getBranch()), withWorkflowChain(`${scope}Committing changes...`), ctx.signal ?? undefined),
     (r) => r.ok,
     () => true,
     (r, attempt) => r === null ? `retrying commit after error (${attempt}/${retries})` : `retrying commit (${attempt}/${retries}): ${commitFailureMessage(r as Extract<CommitResult, { ok: false }>) }`,
@@ -482,8 +482,8 @@ async function runPhases(
   rounds: number,
   matched: number,
   vars: Record<string, string> = {},
-): Promise<boolean> {
-  if (!(await runOncePhase(pi, ctx, config.start, matched, vars))) return false;
+): Promise<{ ok: boolean; failedInFinally: boolean }> {
+  if (!(await runOncePhase(pi, ctx, config.start, matched, vars))) return { ok: false, failedInFinally: false };
   const sections = loopSections(config);
   for (let s = 0; s < sections.length; s++) {
     const section = sections[s]!;
@@ -497,21 +497,21 @@ async function runPhases(
       for (const step of section) {
         if (isStopRequested(ctx)) {
           ctx.ui.notify("Workflow stopped", "info");
-          return false;
+          return { ok: false, failedInFinally: false };
         }
         if (step.tree !== undefined) {
-          if (!(await runTreeStep(ctx, scope, step.tree, retriesFor(step), vars))) return false;
+          if (!(await runTreeStep(ctx, scope, step.tree, retriesFor(step), vars))) return { ok: false, failedInFinally: false };
           continue;
         }
         if (step.onlyIfChanges) {
           roundHasConditional = true;
           const changed = await checkForChanges(pi, ctx, scope);
-          if (changed === null) return false;
+          if (changed === null) return { ok: false, failedInFinally: false };
           if (!changed) continue;
           roundExecutedConditional = true;
         }
-        if (!(await dispatchStep(pi, ctx, step, vars, scope))) return false;
-        if (!(await handleLengthContinuation(pi, ctx, scope))) return false;
+        if (!(await dispatchStep(pi, ctx, step, vars, scope))) return { ok: false, failedInFinally: false };
+        if (!(await handleLengthContinuation(pi, ctx, scope))) return { ok: false, failedInFinally: false };
       }
       if (roundHasConditional) {
         if (!roundExecutedConditional) {
@@ -527,8 +527,8 @@ async function runPhases(
     }
   }
   workflowLabels[workflowLabels.length - 1] = `Workflow ${index}`;
-  if (!(await runOncePhase(pi, ctx, config.finally, 0, vars))) return false;
-  return true;
+  if (!(await runOncePhase(pi, ctx, config.finally, 0, vars))) return { ok: false, failedInFinally: true };
+  return { ok: true, failedInFinally: false };
 }
 
 async function runWorkflowPhases(
@@ -549,11 +549,11 @@ async function runWorkflowPhases(
     return [];
   });
   const matched = countPhaseMatches(ctx.sessionManager.getBranch(), startMsgs, leading);
-  const ok = await runPhases(pi, ctx, config, index, rounds, matched, vars);
-  if (!ok && config.finallyOnError && !isStopRequested(ctx)) {
+  const result = await runPhases(pi, ctx, config, index, rounds, matched, vars);
+  if (!result.ok && !result.failedInFinally && config.finallyOnError && !isStopRequested(ctx)) {
     await runOncePhase(pi, ctx, config.finally, 0, vars);
   }
-  return ok;
+  return result.ok;
 }
 
 async function runSubWorkflow(pi: ExtensionAPI, ctx: ExtensionCommandContext, index: string, vars: Record<string, string> = {}, scope: string = ""): Promise<boolean> {
@@ -594,7 +594,7 @@ export async function runWorkflow(
   vars: Record<string, string> = {},
 ): Promise<void> {
   if (!tryStartWorkflow()) {
-    ctx.ui.notify("A workflow is already running. Press Esc to cancel it", "warning");
+    ctx.ui.notify("A workflow is already running. Press Esc or use /workflow-stop to cancel it", "warning");
     return;
   }
   workflowStopRequested = false;

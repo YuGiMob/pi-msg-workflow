@@ -9,6 +9,7 @@ import { getWorkflows, getWorkflowConfig, getWorkflowRunError, loopSections, tot
 import { resetUserData } from "./src/user-data.js";
 import { WorkflowEditorOverlay, WorkflowTab, MessagesTab, CommandsTab, MAX_OVERLAY_HEIGHT_RATIO, type EditorTab } from "./src/workflow-editor.js";
 import { captureConsoleMessages } from "./src/console-capture.js";
+import { errorMessage } from "./src/errors.js";
 import { requestWorkflowStop, isWorkflowRunning, runWorkflow, notifyMissingEntry, navigateToMessageAnchor, notifyNavigationStatus, extractWorkflowVars, interpolateText } from "./src/workflow-runner.js";
 
 const OVERLAY_OPTIONS = {
@@ -85,14 +86,19 @@ function registerStoreCommand(pi: ExtensionAPI, name: string, noun: string, getS
 }
 
 function registerSendCommand(pi: ExtensionAPI, name: string): void {
-  registerStoreCommand(pi, name, "Message", getMessages, async (message) => {
-    pi.sendUserMessage(message, { deliverAs: "followUp" });
+  registerStoreCommand(pi, name, "Message", getMessages, async (message, num, ctx) => {
+    try {
+      pi.sendUserMessage(message, { deliverAs: "followUp" });
+    } catch (err) {
+      ctx.ui.notify(`Failed to send message ${num}: ${errorMessage(err)}`, "error");
+      return false;
+    }
     return true;
   });
 }
 function registerPerformCommand(pi: ExtensionAPI, name: string): void {
   registerStoreCommand(pi, name, "Command", getCommands, async (command, num, ctx) => {
-    const result = await runCommand(pi, command, `Running ${command}...`, ctx.ui);
+    const result = await runCommand(pi, command, `Running ${command}...`, ctx.ui, ctx.signal);
     if (!result.ok) {
       ctx.ui.notify(commandFailureMessage(num, result), result.reason === "failed" ? "error" : "warning");
       return false;
@@ -244,9 +250,22 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("workflow-stop", {
+    description: "Cancel the running workflow after the current step",
+    handler: async (_args, ctx: ExtensionCommandContext) => {
+      if (!requireInteractive(ctx, "workflow-stop")) return;
+      if (!isWorkflowRunning()) {
+        ctx.ui.notify("No workflow is running", "info");
+        return;
+      }
+      requestWorkflowStop();
+      ctx.ui.notify("Stopping workflow after the current step", "info");
+    },
+  });
+
   pi.registerCommand("workflow", {
     description:
-      "Run a numbered workflow (default 1): start messages, then review rounds of tree reset, stored commands and messages (see workflow.json)",
+      "Run a numbered workflow (default 3): start messages, then review rounds of tree reset, stored commands and messages (see workflow.json)",
     getArgumentCompletions: (prefix) => {
       const { workflows } = getWorkflows();
       const items = Object.keys(workflows)
@@ -279,23 +298,20 @@ export default function (pi: ExtensionAPI) {
         return;
       }
       const dryRun = tokens.some((token) => token === "dry" || token === "--dry-run");
-      const argsWithoutFlags = args.replace(/\b(?:dry|--dry-run)\b/g, " ").replace(/\s+/g, " ").trim();
+      const argsWithoutFlags = tokens.filter((token) => token !== "dry" && token !== "--dry-run").join(" ");
       const extracted = extractWorkflowVars(argsWithoutFlags);
       const vars = extracted.vars;
       if (extracted.warning !== undefined) ctx.ui.notify(extracted.warning, "warning");
       if (!dryRun && isWorkflowRunning()) {
-        ctx.ui.notify("A workflow is already running. Press Esc to cancel it", "warning");
+        ctx.ui.notify("A workflow is already running. Press Esc or use /workflow-stop to cancel it", "warning");
         return;
       }
       const numeric = tokens.filter(isNumericString);
       const index = numeric[0] ?? "3";
-      const { config, errors, exists, fallback, workflows } = getWorkflowConfig(index);
+      const { config, errors, exists, workflows } = getWorkflowConfig(index);
       if (!exists) {
-        if (fallback && errors.length > 0) {
-          notifyConfigErrors(ctx, errors);
-        } else {
-          ctx.ui.notify(`Workflow ${index} does not exist. Use /workflow-edit and press w to create it.`, "error");
-        }
+        notifyConfigErrors(ctx, errors);
+        ctx.ui.notify(`Workflow ${index} does not exist. Use /workflow-edit and press w to create it.`, "error");
         return;
       }
       notifyConfigErrors(ctx, errors);
