@@ -26,6 +26,5 @@
   "25": "Are these bugs actually real and worth fixing? Check whether each bug is reproducible, whether it impacts real usage, whether it is a false positive or theoretical edge case that cannot happen, and whether the fix risk outweighs the bug. Only bugs that are real, reachable, and worth the change are worth fixing",
   "26": "Fix all of the bugs worth fixing. Keep each fix minimal and focused on the bug itself, do not refactor unrelated code, and preserve existing behavior for correct inputs",
   "27": "I need you to take a closer look at the changes that I did with another agent to fix a bug in this codebase. You can see the changes via 'git diff --staged'. Check that the fix actually addresses a bug, does not introduce new bugs, handles edge cases correctly, and does not change behavior for correct inputs. Look for incomplete fixes and regressions",
-  "28": "If your review found any issues with the staged changes that another agent made to fix a bug, fix them now",
-  "29": "Run the test suite for this project using the appropriate command for its language and build system (for example npm test, pytest, cargo test, go test ./..., or the project's documented test command) and make sure all tests pass. If the project has no test suite, say so and continue. Fix any failures caused by your changes, keeping fixes minimal."
+  "28": "If your review found any issues with the staged changes that another agent made to fix a bug, fix them now"
 }

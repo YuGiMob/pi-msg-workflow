@@ -91,7 +91,6 @@
       { "cmd": "1", "retries": 2 },
       { "msg": "21", "retries": 2 },
       { "msg": "22", "retries": 2 },
-      { "msg": "29", "onlyIfChanges": true, "retries": 2 },
       { "msg": "23", "onlyIfChanges": true, "retries": 2 },
       { "cmd": "1", "onlyIfChanges": true, "retries": 2 }
     ],
@@ -114,7 +113,6 @@
       { "cmd": "1", "retries": 2 },
       { "msg": "27", "retries": 2 },
       { "msg": "28", "retries": 2 },
-      { "msg": "29", "onlyIfChanges": true, "retries": 2 },
       { "msg": "5", "onlyIfChanges": true, "retries": 2 },
       { "cmd": "1", "onlyIfChanges": true, "retries": 2 }
     ],
