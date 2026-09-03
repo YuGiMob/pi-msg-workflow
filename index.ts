@@ -250,19 +250,6 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.registerCommand("workflow-stop", {
-    description: "Cancel the running workflow after the current step",
-    handler: async (_args, ctx: ExtensionCommandContext) => {
-      if (!requireInteractive(ctx, "workflow-stop")) return;
-      if (!isWorkflowRunning()) {
-        ctx.ui.notify("No workflow is running", "info");
-        return;
-      }
-      requestWorkflowStop();
-      ctx.ui.notify("Stopping workflow after the current step", "info");
-    },
-  });
-
   pi.registerCommand("workflow", {
     description:
       "Run a numbered workflow (default 3): start messages, then review rounds of tree reset, stored commands and messages (see workflow.json)",
@@ -303,7 +290,7 @@ export default function (pi: ExtensionAPI) {
       const vars = extracted.vars;
       if (extracted.warning !== undefined) ctx.ui.notify(extracted.warning, "warning");
       if (!dryRun && isWorkflowRunning()) {
-        ctx.ui.notify("A workflow is already running. Press Esc or use /workflow-stop to cancel it", "warning");
+        ctx.ui.notify("A workflow is already running. Press Esc to cancel it", "warning");
         return;
       }
       const numeric = tokens.filter(isNumericString);

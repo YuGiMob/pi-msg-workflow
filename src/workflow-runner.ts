@@ -594,7 +594,7 @@ export async function runWorkflow(
   vars: Record<string, string> = {},
 ): Promise<void> {
   if (!tryStartWorkflow()) {
-    ctx.ui.notify("A workflow is already running. Press Esc or use /workflow-stop to cancel it", "warning");
+    ctx.ui.notify("A workflow is already running. Press Esc to cancel it", "warning");
     return;
   }
   workflowStopRequested = false;
