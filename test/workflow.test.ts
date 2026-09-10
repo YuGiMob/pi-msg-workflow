@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { userDataPath } from "../src/user-data.js";
-import { requestWorkflowStop } from "../src/workflow-runner.js";
+import { hasUnstagedChanges, requestWorkflowStop } from "../src/workflow-runner.js";
 vi.mock("node:fs", () => ({
   readFileSync: vi.fn(),
   writeFileSync: vi.fn(),
@@ -723,6 +723,60 @@ describe("workflow extension", () => {
     expect(pi.exec).toHaveBeenCalledTimes(1);
     expect(pi.exec).toHaveBeenCalledWith("git", ["status", "--porcelain"]);
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("no changes detected"), "info");
+  });
+
+  it("skips onlyIfChanges when status shows only staged changes", async () => {
+    holder.workflow = { "1": { rounds: 1, start: [], loop: [{ tree: "1" }, { cmd: "1", onlyIfChanges: true }], finally: [] } };
+    pi.exec = vi.fn(async (cmd: string, args: string[]) =>
+      cmd === "git" && args[0] === "status"
+        ? { code: 0, stdout: "M  staged.txt\nA  added.txt\n", stderr: "" }
+        : { code: 0, stdout: "", stderr: "" },
+    );
+    const ctx = createCtx(fullPhaseA());
+    await commands["workflow"].handler("1", ctx);
+    expect(pi.exec).not.toHaveBeenCalledWith("git", ["add", "."]);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("no changes detected"), "info");
+  });
+
+  it("runs onlyIfChanges when status shows untracked files", async () => {
+    holder.workflow = { "1": { rounds: 1, start: [], loop: [{ tree: "1" }, { cmd: "1", onlyIfChanges: true }], finally: [] } };
+    pi.exec = vi.fn(async (cmd: string, args: string[]) =>
+      cmd === "git" && args[0] === "status"
+        ? { code: 0, stdout: "?? new.txt\n", stderr: "" }
+        : { code: 0, stdout: "", stderr: "" },
+    );
+    const ctx = createCtx(fullPhaseA());
+    await commands["workflow"].handler("1", ctx);
+    expect(pi.exec).toHaveBeenCalledWith("git", ["add", "."]);
+  });
+
+  describe("hasUnstagedChanges", () => {
+    it("reports no changes for empty output", () => {
+      expect(hasUnstagedChanges("")).toBe(false);
+      expect(hasUnstagedChanges("\n")).toBe(false);
+    });
+
+    it("ignores staged-only entries", () => {
+      expect(hasUnstagedChanges("M  staged.txt\n")).toBe(false);
+      expect(hasUnstagedChanges("A  added.txt\nM  other.txt\n")).toBe(false);
+    });
+
+    it("detects unstaged modifications", () => {
+      expect(hasUnstagedChanges(" M unstaged.txt\n")).toBe(true);
+      expect(hasUnstagedChanges("MM both.txt\n")).toBe(true);
+    });
+
+    it("detects untracked files", () => {
+      expect(hasUnstagedChanges("?? new.txt\n")).toBe(true);
+    });
+
+    it("detects unstaged entries mixed with staged ones", () => {
+      expect(hasUnstagedChanges("M  staged.txt\n M unstaged.txt\n")).toBe(true);
+    });
+
+    it("ignores branch headers", () => {
+      expect(hasUnstagedChanges("## main...origin/main\n")).toBe(false);
+    });
   });
 
   it("warns and falls back when the tree anchor message is not in the session", async () => {

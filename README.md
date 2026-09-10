@@ -119,14 +119,14 @@ Ordered steps repeated each round. `loop` is the first loop section; additional 
 | `{ "tree": "1" }` | Reset the agent's context to the response of message 1 (same as `/tree-jump 1`). If the message text is not in the session (e.g. after a compaction), a warning is shown and the context falls back to the response of the first user message. |
 | `{ "tree": "0" }` | Start a new session (0 is never a message index): the context resets to the start of the session, so the previous rounds leave the context and the next start phase re-sends its messages (e.g. a fresh read of the codebase). The old rounds stay in the session tree as a branch. Commands and commit steps keep working. |
 | `{ "msg": "6" }` | Send message 6 and wait for the turn to finish. |
-| `{ "msg": "5", "onlyIfChanges": true }` | Send message 5 only when `git status --porcelain` shows changes. |
+| `{ "msg": "5", "onlyIfChanges": true }` | Send message 5 only when `git status --porcelain` shows unstaged or untracked changes. |
 | `{ "cmd": "1" }` | Perform command 1 from the command store. |
-| `{ "cmd": "1", "onlyIfChanges": true }` | Perform command 1 only when `git status --porcelain` shows changes. |
+| `{ "cmd": "1", "onlyIfChanges": true }` | Perform command 1 only when `git status --porcelain` shows unstaged or untracked changes. |
 | `{ "workflow": "2" }` | Run workflow 2 (its start phase, review rounds, and finally phase) and wait for it to finish. |
-| `{ "workflow": "2", "onlyIfChanges": true }` | Run workflow 2 only when `git status --porcelain` shows changes. |
+| `{ "workflow": "2", "onlyIfChanges": true }` | Run workflow 2 only when `git status --porcelain` shows unstaged or untracked changes. |
 | `{ "commit": true }` | Stage all changes and commit them with the agent's last response as the message when one was requested (e.g. by message 17), falling back to a message derived from the changed files. |
 
-`onlyIfChanges` runs `git status --porcelain` in the project directory, so it requires the project to be a git repository. A msg, cmd, or workflow step with `onlyIfChanges` is skipped when there are no changes.
+`onlyIfChanges` runs `git status --porcelain` in the project directory, so it requires the project to be a git repository. Only unstaged modifications and untracked files count: staged-only entries such as `M  file` are ignored, so a step right after `git add` is skipped. A msg, cmd, or workflow step with `onlyIfChanges` is skipped when there are no unstaged or untracked changes.
 Message indices refer to the numbered message store: `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store: `/cmd 1` and `{ "cmd": "1" }` address the same command. The default message store is numbered `1` to `28`: `1` to `7` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix), `9` to `15` serve workflow 2 (combined review, value check, implement, closer look, fix, validate, summarize), `16` serves workflow 4 (online research), `18` to `23` serve workflow 5 (test-coverage gaps, value check, implement tests, closer look at tests, fix, validate), `24` to `28` serve workflow 6 (bug hunt, real-bug check, fix bugs, closer look at fixes, fix), and `5`/`17` are shared for validation and commit messages across all default workflows.
 
 #### `finally`
@@ -254,7 +254,7 @@ Each user copy is tracked against the checksum of the packaged default it was sy
 - The workflow refuses to start. Another workflow is running; press Esc to cancel it after the current step.
 - The editor refuses to save. The Workflow tab references messages, commands, or workflows that don't exist yet: add and save them in the Messages/Commands tabs first (create missing workflows with `w`). The save would create a circular workflow reference: break the cycle in the referenced workflow first. The Messages/Commands tabs refuse to delete a message or command still referenced by the workflow: drop those references in the Workflow tab first.
 - `"Circular workflow reference: 1 → 2 → 1."` A workflow contains itself, directly or indirectly. Break the cycle in the referenced workflow first, then save or run again.
-- `onlyIfChanges` never fires. The project is not a git repository, or `git status --porcelain` reports no changes.
+- `onlyIfChanges` never fires. The project is not a git repository, or `git status --porcelain` reports no unstaged or untracked changes (staged-only entries do not count).
 - My config changes are ignored. The files live in `~/.config/pi-msg-workflow/`, not inside the installed package. If you edited the packaged copies, back them up and let the user copies sync.
 - I want the default workflows back. `/workflow-reset` restores `workflow.json`, `messages.json`, and `commands.json` to the packaged defaults.
 - `/tree-jump` says the message is not in the session. The message text must appear verbatim in the session history; send it first with `/msg N`.

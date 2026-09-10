@@ -316,6 +316,16 @@ async function runTreeStep(ctx: ExtensionCommandContext, scope: string, tree: st
   return false;
 }
 
+export function hasUnstagedChanges(statusOutput: string): boolean {
+  for (const line of statusOutput.split("\n")) {
+    if (line.length === 0) continue;
+    if (line.startsWith("##")) continue;
+    if (line.startsWith("??")) return true;
+    if (line.length >= 2 && line[1] !== " ") return true;
+  }
+  return false;
+}
+
 async function checkForChanges(pi: ExtensionAPI, ctx: ExtensionCommandContext, scope: string): Promise<boolean | null> {
   ctx.ui.setWorkingMessage(withWorkflowChain(`${scope}checking for changes...`));
   try {
@@ -330,7 +340,7 @@ async function checkForChanges(pi: ExtensionAPI, ctx: ExtensionCommandContext, s
       ctx.ui.notify(`git status --porcelain failed: ${statusResult.stderr}`, "error");
       return null;
     }
-    const changed = statusResult.stdout.trim().length > 0;
+    const changed = hasUnstagedChanges(statusResult.stdout);
     if (!changed) ctx.ui.notify(withWorkflowChain(`${scope}no changes detected, skipping step`), "info");
     return changed;
   } finally {
