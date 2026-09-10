@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { errorMessage, execFailureMessage } from "./errors.js";
+import { execWithSignal } from "./exec.js";
 
 export type CommandResult =
   | { ok: true }
@@ -68,7 +69,7 @@ export async function runCommand(
   if (parts.length === 0 || parts[0] === "") return { ok: false, reason: "empty", stderr: "" };
   ui.setWorkingMessage(workingText);
   try {
-    const result = signal === undefined ? await pi.exec(parts[0]!, parts.slice(1)) : await pi.exec(parts[0]!, parts.slice(1), { signal });
+    const result = await execWithSignal(pi, parts[0]!, parts.slice(1), signal);
     if (result.code !== 0) return { ok: false, reason: "failed", stderr: result.stderr, stdout: result.stdout };
     return { ok: true };
   } catch (err) {

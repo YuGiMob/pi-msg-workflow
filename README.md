@@ -45,7 +45,6 @@ The package ships with default messages (`1` to `28`), default commands (`1` = `
 | `/workflow-edit` | Open the interactive editor. |
 | `/workflow-reset` | Reset `workflow.json`, `messages.json`, and `commands.json` to the packaged defaults. |
 | `/tree-jump <number>` | Reset the agent's context to the response of message N. |
-| `/workflow-stop` | Cancel the running workflow after the current step. |
 
 Commands that take a number offer Tab autocomplete.
 
@@ -136,14 +135,14 @@ Ordered steps run once after the loop finishes, unless a step fails and `finally
 
 #### `finallyOnError`
 
-Optional boolean (default `false`). When enabled, the `finally` phase runs even when a step fails, so the summary still goes out after an aborted workflow. A manual stop with `/workflow-stop` never triggers the `finally` phase.
+Optional boolean (default `false`). When enabled, the `finally` phase runs even when a step fails, so the summary still goes out after an aborted workflow. Pressing Esc to stop the workflow never triggers the `finally` phase.
 Command content is split on whitespace; single- and double-quoted arguments are supported (e.g. `git commit -m "fix"`), with `\"` and `\\` escapes inside double quotes. Unterminated quotes are rejected.
 
 Config values that fail validation produce a `[pi-msg-workflow]` warning and fall back to the defaults shown above.
 
 ### Contained workflows
 
-A `{ "workflow": "n" }` step runs workflow `n` as a sub-workflow: its start phase, its loop sections, and its finally phase, with its own configured `rounds`. The sub-workflow's start phase skips messages that are already in the session, just like the top-level start phase. A failure inside the sub-workflow aborts the parent workflow; the sub-workflow's own `finallyOnError` decides whether its finally phase still runs, and the parent's `finallyOnError` decides whether the parent's finally phase runs. `/workflow-stop` cancels the whole chain after the current step.
+A `{ "workflow": "n" }` step runs workflow `n` as a sub-workflow: its start phase, its loop sections, and its finally phase, with its own configured `rounds`. The sub-workflow's start phase skips messages that are already in the session, just like the top-level start phase. A failure inside the sub-workflow aborts the parent workflow; the sub-workflow's own `finallyOnError` decides whether its finally phase still runs, and the parent's `finallyOnError` decides whether the parent's finally phase runs. Pressing Esc cancels the whole chain after the current step.
 
 Workflows can contain each other to any depth, but circular references are rejected: the editor refuses to save a workflow that would create a cycle, and `/workflow` refuses to run a workflow whose graph contains a cycle. A workflow step that references a workflow that does not exist is rejected like a missing message or command.
 
@@ -246,13 +245,13 @@ Each user copy is tracked against the checksum of the packaged default it was sy
 
 - Command content is split on whitespace (single- and double-quoted arguments supported) and executed directly. Pipes, `&&`, `||`, and redirection are not supported; use one command per step or a script.
 - The start phase skips msg steps whose text matches the leading user messages of the session, in order, stopping at the first non-matching user message. A message you typed manually with identical text counts as already sent. cmd steps always re-run.
-- `/workflow` refuses to start while another workflow is running. `/workflow-stop` reports when no workflow is running.
+- `/workflow` refuses to start while another workflow is running. Press Esc to cancel it after the current step.
 
 ## Troubleshooting
 
 - `"Message N does not exist."` Create it in the editor's Messages tab, or run `/workflow-reset` to restore the default stores.
 - `"Workflow N does not exist."` The number is not in `workflow.json`. `/workflow` runs the default workflow 1; create other workflows in the editor with `w` or add them to `workflow.json` directly.
-- The workflow refuses to start. Another workflow is running; use `/workflow-stop` to cancel it after the current step.
+- The workflow refuses to start. Another workflow is running; press Esc to cancel it after the current step.
 - The editor refuses to save. The Workflow tab references messages, commands, or workflows that don't exist yet: add and save them in the Messages/Commands tabs first (create missing workflows with `w`). The save would create a circular workflow reference: break the cycle in the referenced workflow first. The Messages/Commands tabs refuse to delete a message or command still referenced by the workflow: drop those references in the Workflow tab first.
 - `"Circular workflow reference: 1 → 2 → 1."` A workflow contains itself, directly or indirectly. Break the cycle in the referenced workflow first, then save or run again.
 - `onlyIfChanges` never fires. The project is not a git repository, or `git status --porcelain` reports no changes.

@@ -92,12 +92,16 @@ export function isValidStopAfterEmpty(value: unknown): boolean {
   return isValidIntInRange(value, 1, MAX_ROUNDS);
 }
 
-function isStepForAllowedActions(value: unknown, allowed: string[], checkOnlyIfChanges: boolean): boolean {
+function isCommitStepValue(step: Record<string, unknown>, content: unknown): boolean {
+  return content === true && !("onlyIfChanges" in step);
+}
+
+function isStepForAllowedActions(value: unknown, allowedRefActions: string[], checkOnlyIfChanges: boolean): boolean {
   const entry = stepAction(value);
   if (entry === null) return false;
   if ("retries" in entry.step && !isValidRetries(entry.step.retries)) return false;
-  if (entry.action === "commit") return entry.content === true && !("onlyIfChanges" in entry.step);
-  if (!allowed.includes(entry.action)) return false;
+  if (entry.action === "commit") return isCommitStepValue(entry.step, entry.content);
+  if (!allowedRefActions.includes(entry.action)) return false;
   if (!isNumericString(entry.content)) return false;
   if (checkOnlyIfChanges) {
     if (entry.action === "tree" && "onlyIfChanges" in entry.step) return false;
@@ -129,6 +133,7 @@ function parseStepsField<T>(input: Record<string, unknown>, errors: string[], ta
       else errors.push(`${tag}Invalid ${field} step ${JSON.stringify(entry)}. Skipped.`);
     }
     if (steps.length > 0) return steps;
+    if (fallback.length === 0) return steps;
     errors.push(`${tag}No valid ${field} steps. Using the default.`);
     return cloneSteps(fallback);
   }
@@ -260,8 +265,13 @@ export function getWorkflowConfig(index = "1"): { config: WorkflowConfig; errors
 
 function readWorkflowEntries(): Record<string, unknown> {
   const workflows: Record<string, unknown> = {};
-  const raw = readJsonObject(WORKFLOW_PATH);
-  if (raw === null) return workflows;
+  let broken = false;
+  let readError: unknown = null;
+  const raw = readJsonObject(WORKFLOW_PATH, (err) => { broken = true; readError = err; });
+  if (raw === null) {
+    if (broken) throw new Error(`Could not read workflow.json: ${errorMessage(readError)}`);
+    return workflows;
+  }
   if (isSingleConfig(raw)) {
     workflows["1"] = raw;
     return workflows;

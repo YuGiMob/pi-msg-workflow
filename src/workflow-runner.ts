@@ -2,6 +2,7 @@ import type { ExecResult, ExtensionAPI, ExtensionCommandContext, SessionEntry } 
 import { getMessages } from "./messages.js";
 import { getCommands } from "./commands.js";
 import { errorMessage } from "./errors.js";
+import { execWithSignal } from "./exec.js";
 import { countPhaseMatches, countUserTextMatches, findAnchorAfterMessage, lastAssistantMessageText, lastAssistantStopReason } from "./session-helpers.js";
 import { runCommand, commandFailureMessage, type CommandResult } from "./command-runner.js";
 import { runCommit, commitFailureMessage, type CommitResult } from "./commit.js";
@@ -67,13 +68,21 @@ export function extractWorkflowVars(raw: string): { vars: Record<string, string>
       }
       const vars: Record<string, string> = {};
       const ignored: string[] = [];
+      const blocked: string[] = [];
       for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+        if (k === "__proto__" || k === "constructor" || k === "prototype") {
+          blocked.push(k);
+          continue;
+        }
         if (typeof v === "string") vars[k] = v;
         else if (typeof v === "number" || typeof v === "boolean") vars[k] = String(v);
         else ignored.push(k);
       }
-      if (ignored.length > 0) {
-        return { vars, warning: `Workflow vars ignored: non-string values for ${ignored.join(", ")} in ${jsonText.slice(0, 80)}` };
+      if (blocked.length > 0 || ignored.length > 0) {
+        const reasons: string[] = [];
+        if (blocked.length > 0) reasons.push(`unsafe keys ${blocked.join(", ")}`);
+        if (ignored.length > 0) reasons.push(`non-string values for ${ignored.join(", ")}`);
+        return { vars, warning: `Workflow vars ignored: ${reasons.join("; ")} in ${jsonText.slice(0, 80)}` };
       }
       return { vars };
     } catch {
@@ -309,20 +318,24 @@ async function runTreeStep(ctx: ExtensionCommandContext, scope: string, tree: st
 
 async function checkForChanges(pi: ExtensionAPI, ctx: ExtensionCommandContext, scope: string): Promise<boolean | null> {
   ctx.ui.setWorkingMessage(withWorkflowChain(`${scope}checking for changes...`));
-  let statusResult: ExecResult;
   try {
-    statusResult = ctx.signal === undefined || ctx.signal === null ? await pi.exec("git", ["status", "--porcelain"]) : await pi.exec("git", ["status", "--porcelain"], { signal: ctx.signal });
-  } catch (err) {
-    ctx.ui.notify(`git status --porcelain failed: ${errorMessage(err)}`, "error");
-    return null;
+    let statusResult: ExecResult;
+    try {
+      statusResult = await execWithSignal(pi, "git", ["status", "--porcelain"], ctx.signal);
+    } catch (err) {
+      ctx.ui.notify(`git status --porcelain failed: ${errorMessage(err)}`, "error");
+      return null;
+    }
+    if (statusResult.code !== 0) {
+      ctx.ui.notify(`git status --porcelain failed: ${statusResult.stderr}`, "error");
+      return null;
+    }
+    const changed = statusResult.stdout.trim().length > 0;
+    if (!changed) ctx.ui.notify(withWorkflowChain(`${scope}no changes detected, skipping step`), "info");
+    return changed;
+  } finally {
+    ctx.ui.setWorkingMessage();
   }
-  if (statusResult.code !== 0) {
-    ctx.ui.notify(`git status --porcelain failed: ${statusResult.stderr}`, "error");
-    return null;
-  }
-  const changed = statusResult.stdout.trim().length > 0;
-  if (!changed) ctx.ui.notify(withWorkflowChain(`${scope}no changes detected, skipping step`), "info");
-  return changed;
 }
 async function handleLengthContinuation(pi: ExtensionAPI, ctx: ExtensionCommandContext, scope: string): Promise<boolean> {
   for (let i = 0; i < 3; i++) {
@@ -419,8 +432,8 @@ async function sendStoredMessage(
       return r === null ? `retrying message ${num} after error (${attempt}/${retries})` : `retrying message ${num} (${attempt}/${retries})`;
     },
   ) as SendResult | null;
+  ctx.ui.setWorkingMessage();
   if (result === null) {
-    ctx.ui.setWorkingMessage();
     return false;
   }
   if (result === "cancelled") {
@@ -604,7 +617,12 @@ export async function runWorkflow(
   workflowLabels.push(`Workflow ${index}`);
   try {
     ctx.ui.setWorkingMessage("Waiting for queued messages to complete...");
-    await ctx.waitForIdle();
+    try {
+      await ctx.waitForIdle();
+    } catch (err) {
+      ctx.ui.notify(withWorkflowChain(`${errorMessage(err)}`), "error");
+      return;
+    }
     const ok = await runWorkflowPhases(pi, ctx, config, index, rounds, messages, true, vars);
     if (ok) ctx.ui.notify(`Workflow ${index} complete: ${rounds} round${rounds === 1 ? "" : "s"}`, "info");
   } finally {

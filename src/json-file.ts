@@ -22,28 +22,25 @@ export function readJsonObject(
   }
 }
 
+function tryFsync(path: string): void {
+  try {
+    const fd = openSync(path, "r");
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+  } catch {}
+}
+
 export function writeJsonAtomic(file: string, value: unknown): void {
   const tmp = `${file}.tmp.${process.pid}.${randomUUID()}`;
   try {
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(tmp, JSON.stringify(value, null, 2), "utf-8");
-    try {
-      const fd = openSync(tmp, "r");
-      try {
-        fsyncSync(fd);
-      } finally {
-        closeSync(fd);
-      }
-    } catch {}
+    tryFsync(tmp);
     renameSync(tmp, file);
-    try {
-      const dirFd = openSync(dirname(file), "r");
-      try {
-        fsyncSync(dirFd);
-      } finally {
-        closeSync(dirFd);
-      }
-    } catch {}
+    tryFsync(dirname(file));
   } catch (err) {
     try {
       unlinkSync(tmp);

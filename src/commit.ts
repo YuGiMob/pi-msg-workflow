@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { errorMessage, execFailureMessage } from "./errors.js";
+import { execWithSignal } from "./exec.js";
 
 export type CommitResult =
   | { ok: true; committed: boolean }
@@ -20,15 +21,15 @@ function commitMessage(nameOnlyOutput: string): string {
 export async function runCommit(pi: ExtensionAPI, ui: { setWorkingMessage(message?: string): void }, message?: string, workingText = "Committing changes...", signal?: AbortSignal): Promise<CommitResult> {
   ui.setWorkingMessage(workingText);
   try {
-    const status = signal === undefined ? await pi.exec("git", ["status", "--porcelain"]) : await pi.exec("git", ["status", "--porcelain"], { signal });
+    const status = await execWithSignal(pi, "git", ["status", "--porcelain"], signal);
     if (status.code !== 0) return { ok: false, reason: "failed", stderr: status.stderr, stdout: status.stdout };
     if (status.stdout.trim() === "") return { ok: true, committed: false };
-    const add = signal === undefined ? await pi.exec("git", ["add", "-A"]) : await pi.exec("git", ["add", "-A"], { signal });
+    const add = await execWithSignal(pi, "git", ["add", "-A"], signal);
     if (add.code !== 0) return { ok: false, reason: "failed", stderr: add.stderr, stdout: add.stdout };
-    const names = signal === undefined ? await pi.exec("git", ["diff", "--cached", "--name-only"]) : await pi.exec("git", ["diff", "--cached", "--name-only"], { signal });
+    const names = await execWithSignal(pi, "git", ["diff", "--cached", "--name-only"], signal);
     if (names.code !== 0) return { ok: false, reason: "failed", stderr: names.stderr, stdout: names.stdout };
     const text = message !== undefined && message.trim() !== "" ? message.trim() : commitMessage(names.stdout);
-    const commit = signal === undefined ? await pi.exec("git", ["commit", "-m", text]) : await pi.exec("git", ["commit", "-m", text], { signal });
+    const commit = await execWithSignal(pi, "git", ["commit", "-m", text], signal);
     if (commit.code !== 0) return { ok: false, reason: "failed", stderr: commit.stderr, stdout: commit.stdout };
     return { ok: true, committed: true };
   } catch (err) {
