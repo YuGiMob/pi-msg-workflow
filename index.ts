@@ -5,7 +5,7 @@ import { getCommands } from "./src/commands.js";
 import { MAX_ROUNDS, WORKFLOW_FILE, MESSAGES_FILE, COMMANDS_FILE } from "./src/constants.js";
 import { compareNumericKeys } from "./src/json-file.js";
 import { runCommand, commandFailureMessage } from "./src/command-runner.js";
-import { getWorkflows, getWorkflowConfig, getWorkflowRunError, loopSections, totalLoopSteps, isNumericString, type StartStep, type LoopStep, type WorkflowConfig } from "./src/workflow-config.js";
+import { getWorkflows, getWorkflowConfig, getWorkflowRunError, loopSections, describeWorkflow, isNumericString, type StartStep, type LoopStep, type WorkflowConfig } from "./src/workflow-config.js";
 import { resetUserData } from "./src/user-data.js";
 import { WorkflowEditorOverlay, WorkflowTab, MessagesTab, CommandsTab, MAX_OVERLAY_HEIGHT_RATIO, type EditorTab } from "./src/workflow-editor.js";
 import { captureConsoleMessages } from "./src/console-capture.js";
@@ -39,7 +39,7 @@ function describeStep(step: LoopStep, messages: Record<string, string>, commands
   }
   if (step.workflow !== undefined) {
     const config = workflows[step.workflow];
-    return `wf ${step.workflow}${suffix}: ${config === undefined ? "(missing)" : `${config.rounds} round${config.rounds === 1 ? "" : "s"} (${config.start.length} start, ${totalLoopSteps(config)} loop, ${config.finally.length} finally)`}`;
+    return `wf ${step.workflow}${suffix}: ${config === undefined ? "(missing)" : describeWorkflow(config)}`;
   }
   if (step.commit === true) return `commit: stage and commit all changes${suffix}`;
   if (step.tree === "0") return `tree 0: new session${suffix}`;
@@ -154,7 +154,7 @@ function setupEscListener(): void {
   escListenerSetup = true;
   try {
     if (typeof process === "undefined" || !process.stdin?.isTTY) return;
-    if ((process.env as unknown as Record<string, unknown>)["VITEST"] || (process.env as unknown as Record<string, unknown>)["NODE_ENV"] === "test") return;
+    if (process.env.VITEST || process.env.NODE_ENV === "test") return;
     process.stdin.on("data", (data: Buffer | string) => {
       if (!isWorkflowRunning()) return;
       const buf = typeof data === "string" ? Buffer.from(data, "utf-8") : data;
@@ -259,7 +259,7 @@ export default function (pi: ExtensionAPI) {
         .filter((num) => num.startsWith(prefix))
         .map((num) => {
           const config = workflows[num]!;
-          return { value: num, label: `Workflow ${num}: ${config.rounds} rounds (${config.start.length} start, ${totalLoopSteps(config)} loop, ${config.finally.length} finally)` };
+          return { value: num, label: `Workflow ${num}: ${describeWorkflow(config)}` };
         });
       for (const flag of ["dry", "list"]) {
         if (flag.startsWith(prefix)) items.push({ value: flag, label: flag });
@@ -268,7 +268,7 @@ export default function (pi: ExtensionAPI) {
     },
     handler: async (args, ctx: ExtensionCommandContext) => {
       if (!requireInteractive(ctx, "workflow")) return;
-      const tokens = args.trim().split(/\s+/).filter(Boolean);
+      const tokens = args.trim().split(/\s+/);
       if (tokens.some((token) => token === "list")) {
         const { workflows, errors } = getWorkflows();
         notifyConfigErrors(ctx, errors);
@@ -279,7 +279,7 @@ export default function (pi: ExtensionAPI) {
         }
         const lines = keys.map((num) => {
           const config = workflows[num]!;
-          return `  ${num}: ${config.rounds} round${config.rounds === 1 ? "" : "s"} (${config.start.length} start, ${totalLoopSteps(config)} loop, ${config.finally.length} finally)`;
+          return `  ${num}: ${describeWorkflow(config)}`;
         });
         ctx.ui.notify(`Workflows:\n${lines.join("\n")}`, "info");
         return;
@@ -296,12 +296,11 @@ export default function (pi: ExtensionAPI) {
       const numeric = tokens.filter(isNumericString);
       const index = numeric[0] ?? "3";
       const { config, errors, exists, workflows } = getWorkflowConfig(index);
+      notifyConfigErrors(ctx, errors);
       if (!exists) {
-        notifyConfigErrors(ctx, errors);
         ctx.ui.notify(`Workflow ${index} does not exist. Use /workflow-edit and press w to create it.`, "error");
         return;
       }
-      notifyConfigErrors(ctx, errors);
       const messages = getMessages();
       const commands = getCommands();
       const runError = getWorkflowRunError(config, messages, commands, workflows, index);

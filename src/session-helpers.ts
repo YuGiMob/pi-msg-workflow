@@ -45,10 +45,6 @@ export function countPhaseMatches(entries: SessionEntry[], expected: string[], l
   return countMatches(entries, expected, leading);
 }
 
-export function countLeadingPhaseMatches(entries: SessionEntry[], expected: string[]): number {
-  return countPhaseMatches(entries, expected, true);
-}
-
 function lastNonUserMessage(entries: SessionEntry[], from: number, to: number): SessionEntry | undefined {
   for (let i = to; i >= from; i--) {
     const entry = entries[i]!;

@@ -256,11 +256,11 @@ export function getWorkflows(): { workflows: Record<string, WorkflowConfig>; err
   return { workflows: parseWorkflows(raw, errors), errors, fallback: false };
 }
 
-export function getWorkflowConfig(index = "1"): { config: WorkflowConfig; errors: string[]; exists: boolean; fallback: boolean; workflows: Record<string, WorkflowConfig> } {
+export function getWorkflowConfig(index = "1"): { config: WorkflowConfig; errors: string[]; exists: boolean; workflows: Record<string, WorkflowConfig> } {
   const { workflows, errors, fallback } = getWorkflows();
   const config = workflows[index];
-  if (config !== undefined) return { config, errors, exists: true, fallback, workflows };
-  return { config: defaultConfig(), errors, exists: fallback && index === "1", fallback, workflows };
+  if (config !== undefined) return { config, errors, exists: true, workflows };
+  return { config: defaultConfig(), errors, exists: fallback && index === "1", workflows };
 }
 
 function readWorkflowEntries(): Record<string, unknown> {
@@ -337,6 +337,10 @@ export function loopSections(config: WorkflowConfig): LoopStep[][] {
 
 export function totalLoopSteps(config: WorkflowConfig): number {
   return loopSections(config).reduce((sum, section) => sum + section.length, 0);
+}
+
+export function describeWorkflow(config: WorkflowConfig): string {
+  return `${config.rounds} round${config.rounds === 1 ? "" : "s"} (${config.start.length} start, ${totalLoopSteps(config)} loop, ${config.finally.length} finally)`;
 }
 
 export function findWorkflowCycle(workflows: Record<string, WorkflowConfig>, start: string): string[] | null {

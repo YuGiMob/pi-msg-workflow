@@ -162,6 +162,15 @@ function createCtx(entries: any[] = [], overrides: Record<string, any> = {}) {
   };
 }
 
+function stageAndCommitExec() {
+  return vi.fn(async (cmd: string, args: string[]) => {
+    if (cmd === "git" && args[0] === "status") return { code: 0, stdout: " M x\n", stderr: "" };
+    if (cmd === "git" && args[0] === "add") return { code: 0, stdout: "", stderr: "" };
+    if (cmd === "git" && args[0] === "diff") return { code: 0, stdout: "x\n", stderr: "" };
+    return { code: 0, stdout: "", stderr: "" };
+  });
+}
+
 describe("workflow extension", () => {
   let pi: any;
   let commands: Record<string, any>;
@@ -1216,12 +1225,7 @@ describe("workflow extension", () => {
       "1": { rounds: 1, start: [], loop: [{ tree: "1" }, { workflow: "2" }], finally: [{ msg: "8" }] },
       "2": { rounds: 2, start: [{ msg: "9" }], loop: [{ tree: "9" }, { msg: "10" }], finally: [{ commit: true }] },
     };
-    pi.exec = vi.fn(async (cmd: string, args: string[]) => {
-      if (cmd === "git" && args[0] === "status") return { code: 0, stdout: " M x\n", stderr: "" };
-      if (cmd === "git" && args[0] === "add") return { code: 0, stdout: "", stderr: "" };
-      if (cmd === "git" && args[0] === "diff") return { code: 0, stdout: "x\n", stderr: "" };
-      return { code: 0, stdout: "", stderr: "" };
-    });
+    pi.exec = stageAndCommitExec();
     const ctx = createCtx(fullPhaseA());
     await commands["workflow"].handler("1", ctx);
     const working = ctx.ui.setWorkingMessage.mock.calls.map((c: any[]) => c[0]);
@@ -1493,12 +1497,7 @@ describe("workflow extension", () => {
     holder.workflow = {
       "1": { rounds: 1, start: [], loop: [{ tree: "1" }], finally: [{ commit: true }] },
     };
-    pi.exec = vi.fn(async (cmd: string, args: string[]) => {
-      if (cmd === "git" && args[0] === "status") return { code: 0, stdout: " M x\n", stderr: "" };
-      if (cmd === "git" && args[0] === "add") return { code: 0, stdout: "", stderr: "" };
-      if (cmd === "git" && args[0] === "diff") return { code: 0, stdout: "x\n", stderr: "" };
-      return { code: 0, stdout: "", stderr: "" };
-    });
+    pi.exec = stageAndCommitExec();
     const ctx = createCtx(fullPhaseA());
     await commands["workflow"].handler("1", ctx);
     expect(pi.exec).toHaveBeenCalledWith("git", ["add", "-A"]);
@@ -1532,12 +1531,7 @@ describe("workflow extension", () => {
       "1": { rounds: 1, start: [], loop: [{ tree: "1" }, { workflow: "2" }], finally: [] },
       "2": { rounds: 1, start: [], loop: [{ tree: "1" }], finally: [{ commit: true }] },
     };
-    pi.exec = vi.fn(async (cmd: string, args: string[]) => {
-      if (cmd === "git" && args[0] === "status") return { code: 0, stdout: " M x\n", stderr: "" };
-      if (cmd === "git" && args[0] === "add") return { code: 0, stdout: "", stderr: "" };
-      if (cmd === "git" && args[0] === "diff") return { code: 0, stdout: "x\n", stderr: "" };
-      return { code: 0, stdout: "", stderr: "" };
-    });
+    pi.exec = stageAndCommitExec();
     const ctx = createCtx(fullPhaseA());
     await commands["workflow"].handler("1", ctx);
     expect(pi.exec).toHaveBeenCalledWith("git", ["commit", "-m", "response"]);
@@ -1548,12 +1542,7 @@ describe("workflow extension", () => {
     holder.workflow = {
       "1": { rounds: 1, start: [], loop: [{ tree: "1" }, { msg: "6" }], finally: [{ commit: true }] },
     };
-    pi.exec = vi.fn(async (cmd: string, args: string[]) => {
-      if (cmd === "git" && args[0] === "status") return { code: 0, stdout: " M x\n", stderr: "" };
-      if (cmd === "git" && args[0] === "add") return { code: 0, stdout: "", stderr: "" };
-      if (cmd === "git" && args[0] === "diff") return { code: 0, stdout: "x\n", stderr: "" };
-      return { code: 0, stdout: "", stderr: "" };
-    });
+    pi.exec = stageAndCommitExec();
     pi.sendUserMessage = vi.fn((content: string) => {
       const id = String(holder.branch.length);
       holder.branch.push(userEntry(`u${id}`, content));
@@ -1595,12 +1584,7 @@ describe("workflow extension", () => {
       "2": { rounds: 1, start: [{ msg: "1" }, { msg: "9" }], loop: [{ tree: "1" }], finally: [{ commit: true }] },
       "4": { rounds: 1, start: [{ msg: "1" }, { msg: "16" }], loop: [{ tree: "1" }], finally: [{ commit: true }] },
     };
-    pi.exec = vi.fn(async (cmd: string, args: string[]) => {
-      if (cmd === "git" && args[0] === "status") return { code: 0, stdout: " M x\n", stderr: "" };
-      if (cmd === "git" && args[0] === "add") return { code: 0, stdout: "", stderr: "" };
-      if (cmd === "git" && args[0] === "diff") return { code: 0, stdout: "x\n", stderr: "" };
-      return { code: 0, stdout: "", stderr: "" };
-    });
+    pi.exec = stageAndCommitExec();
     const ctx = createCtx([], {
       navigateTree: vi.fn(async (id: string) => {
         if (id === "root") holder.branch = [];

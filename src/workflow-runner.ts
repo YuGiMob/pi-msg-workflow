@@ -25,8 +25,6 @@ let workflowRunning = false;
 const workflowStack: string[] = [];
 const workflowLabels: string[] = [];
 
-export type WorkflowVars = Record<string, string>;
-
 const INTERPOLATION_PATTERN = /\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
 
 export function interpolateText(text: string, vars: Record<string, string>): string {
@@ -100,10 +98,6 @@ export function extractWorkflowVars(raw: string): { vars: Record<string, string>
   }
   return { vars: {} };
 }
-export function parseWorkflowArgs(raw: string): Record<string, string> {
-  return extractWorkflowVars(raw).vars;
-}
-
 
 function retriesFor(step: { retries?: number }): number {
   return step.retries ?? 1;
@@ -160,12 +154,6 @@ function loopLabel(index: string, sectionCount: number, section: number, round: 
 
 export function isWorkflowRunning(): boolean {
   return workflowRunning;
-}
-
-export function tryStartWorkflow(): boolean {
-  if (workflowRunning) return false;
-  workflowRunning = true;
-  return true;
 }
 
 export function requestWorkflowStop(): void {
@@ -616,10 +604,11 @@ export async function runWorkflow(
   messages: Record<string, string>,
   vars: Record<string, string> = {},
 ): Promise<void> {
-  if (!tryStartWorkflow()) {
+  if (workflowRunning) {
     ctx.ui.notify("A workflow is already running. Press Esc to cancel it", "warning");
     return;
   }
+  workflowRunning = true;
   workflowStopRequested = false;
   workflowStack.length = 0;
   workflowStack.push(index);
