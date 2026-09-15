@@ -72,7 +72,8 @@ Commands that take a number offer Tab autocomplete.
       { "cmd": "1", "onlyIfChanges": true }
     ],
     "finally": [
-      { "msg": "8" }
+      { "msg": "17" },
+      { "commit": true }
     ]
   },
   "2": {
@@ -92,7 +93,8 @@ Commands that take a number offer Tab autocomplete.
       { "cmd": "1", "onlyIfChanges": true }
     ],
     "finally": [
-      { "msg": "15" }
+      { "msg": "17" },
+      { "commit": true }
     ]
   }
 }
@@ -102,13 +104,17 @@ Commands that take a number offer Tab autocomplete.
 
 ### The default workflow (3)
 
-Workflow 3 is the default: with `rounds` set to 4, each round starts with a `{ "tree": "0" }` step that starts a new session, runs workflow 4 (online research, adversarial review, implementation, and a commit), starts another new session, and then runs workflow 2 (deduplication, simplification, and bug reduction, which also commits) — so both workflows begin with a fresh read of the codebase and commit after every run (8 commits in a full run).
+Workflow 3 is the default: with `rounds` set to 4, each round starts with a `{ "tree": "0" }` step that starts a new session, runs workflow 4 (online research, adversarial review, implementation, and a commit), starts another new session, and then runs workflow 2 (code reduction with unchanged behavior, which also commits) — so both workflows begin with a fresh read of the codebase and commit after every run (8 commits in a full run). Its finally phase asks for a summary of the whole run (message 15).
 #### `rounds`
 
 Number of review-loop iterations (default `2`, max `5`). Each loop section repeats `rounds` times. `/workflow <workflow> <n>` overrides it for a single run.
 
+#### `stopAfterEmpty`
+
+Optional number (1-5, at most `rounds`). The loop exits early after this many consecutive rounds in which every `onlyIfChanges` step was skipped, so a converged review stops instead of repeating itself. Omit it to always run all `rounds`.
+
 #### `start`
-Ordered steps run once before the loop. Each step is `{ "msg": "n" }`, `{ "cmd": "n" }`, or `{ "workflow": "n" }`. msg steps whose text matches the leading user messages of the session are skipped, in order, so a re-run resumes the phase instead of repeating it. The skip stops at the first non-matching user message; cmd and workflow steps always re-run.
+Ordered steps run once before the loop. Each step is `{ "msg": "n" }`, `{ "cmd": "n" }`, `{ "workflow": "n" }`, or `{ "commit": true }`. msg steps whose text matches the leading user messages of the session are skipped, in order, so a re-run resumes the phase instead of repeating it. The skip stops at the first non-matching user message; cmd, workflow, and commit steps always re-run.
 
 #### `loop`
 
@@ -127,15 +133,20 @@ Ordered steps repeated each round. `loop` is the first loop section; additional 
 | `{ "commit": true }` | Stage all changes and commit them with the agent's last response as the message when one was requested (e.g. by message 17), falling back to a message derived from the changed files. |
 
 `onlyIfChanges` runs `git status --porcelain` in the project directory, so it requires the project to be a git repository. Only unstaged modifications and untracked files count: staged-only entries such as `M  file` are ignored, so a step right after `git add` is skipped. A msg, cmd, or workflow step with `onlyIfChanges` is skipped when there are no unstaged or untracked changes.
-Message indices refer to the numbered message store: `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store: `/cmd 1` and `{ "cmd": "1" }` address the same command. The default message store is numbered `1` to `28`: `1` to `7` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix), `9` to `15` serve workflow 2 (combined review, value check, implement, closer look, fix, validate, summarize), `16` serves workflow 4 (online research), `18` to `23` serve workflow 5 (test-coverage gaps, value check, implement tests, closer look at tests, fix, validate), `24` to `28` serve workflow 6 (bug hunt, real-bug check, fix bugs, closer look at fixes, fix), and `5`/`17` are shared for validation and commit messages across all default workflows.
+Message indices refer to the numbered message store: `/msg 6` and `{ "msg": "6" }` address the same message. Command indices refer to the numbered command store: `/cmd 1` and `{ "cmd": "1" }` address the same command. The default message store is numbered `1` to `28`: `1` to `7` serve workflow 1 (read, improvements, value check, implement, validate, closer look, fix), `8` is an optional changes summary for custom workflows, `9` to `14` serve workflow 2 (code-reduction review, value check, implement, closer look, fix, validate), `15` summarizes a whole workflow run and is sent by workflow 3's finally phase, `16` serves workflow 4 (online research), `18` to `23` serve workflow 5 (test-coverage gaps, value check, implement tests, closer look at tests, fix, validate), `24` to `28` serve workflow 6 (bug hunt, real-bug check, fix bugs, closer look at fixes, fix), and `5`/`17` are shared for validation and commit messages across all default workflows.
 
 #### `finally`
 
-Ordered steps run once after the loop finishes, unless a step fails and `finallyOnError` is not enabled. Each step is `{ "msg": "n" }`, `{ "cmd": "n" }`, or `{ "workflow": "n" }`. All default workflows end with the commit-message request (message 17) followed by a commit step that uses the agent's response as the literal commit message.
+Ordered steps run once after the loop finishes, unless a step fails and `finallyOnError` is not enabled. Each step is `{ "msg": "n" }`, `{ "cmd": "n" }`, `{ "workflow": "n" }`, or `{ "commit": true }`. Workflows 1, 2, 4, 5, and 6 end with the commit-message request (message 17) followed by a commit step that uses the agent's response as the literal commit message; workflow 3 ends with a run summary (message 15) instead.
 
 #### `finallyOnError`
 
 Optional boolean (default `false`). When enabled, the `finally` phase runs even when a step fails, so the summary still goes out after an aborted workflow. Pressing Esc to stop the workflow never triggers the `finally` phase.
+
+#### `retries`
+
+Optional number (1, 2, or 3; default `1`) on any msg, cmd, tree, or commit step. A failed step is retried with backoff up to that many attempts in total, and the workflow aborts when the last attempt fails. Retries cover transient failures such as a git command error, a send the session never picked up, or a failed context reset; they do not repeat an agent turn that already ran. A `retries` on a `{ "workflow": ... }` step is accepted but has no effect.
+
 Command content is split on whitespace; single- and double-quoted arguments are supported (e.g. `git commit -m "fix"`), with `\"` and `\\` escapes inside double quotes. Unterminated quotes are rejected.
 
 Config values that fail validation produce a `[pi-msg-workflow]` warning and fall back to the defaults shown above.
@@ -146,27 +157,28 @@ A `{ "workflow": "n" }` step runs workflow `n` as a sub-workflow: its start phas
 
 Workflows can contain each other to any depth, but circular references are rejected: the editor refuses to save a workflow that would create a cycle, and `/workflow` refuses to run a workflow whose graph contains a cycle. A workflow step that references a workflow that does not exist is rejected like a missing message or command.
 
-### Workflow 2: deduplication, simplification, bug reduction
+### Workflow 2: code reduction (less code, same behavior)
 
-Workflow 2 is a focused review loop over duplicated logic, unnecessary complexity, and bug risks. It shares the read-the-codebase step (message 1) with workflow 1 and runs the whole review in one message before the value check and implementation:
+Workflow 2 is a focused review loop that reduces the size of the codebase while keeping its behavior identical. It looks for duplicated logic, dead code, and unnecessary complexity, implements only the reductions that leave functionality unchanged and complexity no higher, and verifies on the staged diff that nothing reachable was lost. It shares the read-the-codebase step (message 1) with workflow 1 and runs the whole review in one message before the value check and implementation:
 
 | Step | Meaning |
 | --- | --- |
 | `{ "msg": "1" }` | Read the entirety of the codebase (shared with workflow 1; skipped when it already matches the leading user messages of the session). |
-| `{ "msg": "9" }` | Find duplicated logic (the same pattern repeated three or more times, or two substantial structurally identical blocks, that should be extracted into shared helpers), unnecessary complexity (over-engineering, dead code, redundant branches), and bug risks (edge cases, missing error handling, off-by-one errors, race conditions, resource leaks) in one pass. |
-| `{ "msg": "10" }` | Value check: are the deduplication, simplification, and bug-reduction changes actually worth implementing? |
-| `{ "msg": "11" }` | Implement all of the changes worth implementing. |
-| `{ "msg": "12" }` | Take a closer look at all of the changes via `git diff --staged`. |
-| `{ "msg": "13" }` | If the review found any issues with the staged changes, fix them now. |
-| `{ "msg": "14", "onlyIfChanges": true }` | Validate the git status and git diff only when there are changes. |
+| `{ "msg": "9" }` | Find code that can be removed or collapsed without changing behavior in one pass: duplicated logic (the same pattern repeated three or more times, or two substantial structurally identical blocks, that should be extracted into shared helpers), dead code and unreachable branches, and over-engineered abstractions or verbose constructs with a shorter equivalent. Every finding names the exact code and what it shrinks to. |
+| `{ "msg": "10" }` | Value check: does each reduction preserve every observable behavior and the public API, remove real code, and leave the code at least as simple and readable without a new dependency, abstraction, or configuration? |
+| `{ "msg": "11" }` | Implement all of the reductions worth implementing, deleting code instead of relocating it and running the project's existing tests. |
+| `{ "msg": "12" }` | Take a closer look at all of the changes via `git diff --staged`: behavior preserved, nothing reachable deleted, interfaces and output unchanged, and the result genuinely simpler rather than merely shorter. |
+| `{ "msg": "13" }` | If the review found any issues with the staged changes, fix them now by restoring the lost behavior or simplifying further, never by re-adding code with more complexity. |
+| `{ "msg": "14", "onlyIfChanges": true }` | Validate the git status and git diff only when there are changes: exactly the intended code was removed, functionality is unchanged, and nothing unrelated was touched. |
 | `{ "cmd": "1", "onlyIfChanges": true }` | Stage the changes only when there are changes. |
-| `{ "msg": "15" }` | Summarize all of the changes since the last commit. |
+| `{ "msg": "17" }` | Ask for a commit message; the agent's next response is used as the literal commit message. |
+| `{ "commit": true }` | Stage all changes and commit them with that message. |
 
 The tree step resets the context to the response of message 1, the shared read-the-codebase step of this workflow. Its finally phase asks for a commit message (message 17) and commits with the agent's response as the literal message.
 
 ### Workflow 3: explore, improve, commit, then review
 
-Workflow 3 runs two contained workflows per round: workflow 4 (online research, adversarial review, implementation, and a commit in its finally phase) followed by workflow 2 (deduplication, simplification, and bug reduction, which also commits in its finally phase). Each round starts with a `{ "tree": "0" }` step that starts a new session, and another `{ "tree": "0" }` step runs between the two workflows — so both workflow 4 and workflow 2 begin with a fresh read of the codebase (message 1 is sent again) and each commits its own changes with a message it wrote itself (message 17).
+Workflow 3 runs two contained workflows per round: workflow 4 (online research, adversarial review, implementation, and a commit in its finally phase) followed by workflow 2 (code reduction with unchanged behavior, which also commits in its finally phase). Each round starts with a `{ "tree": "0" }` step that starts a new session, and another `{ "tree": "0" }` step runs between the two workflows — so both workflow 4 and workflow 2 begin with a fresh read of the codebase (message 1 is sent again) and each commits its own changes with a message it wrote itself (message 17). Its finally phase asks for a summary of the whole run (message 15).
 
 ### Workflow 4: online research and adversarial review
 
@@ -219,6 +231,8 @@ The tree step resets the context to the response of message 1, the shared read-t
 | `x` | delete the selected row (on a loop section's tree row: delete that section) |
 | `n` | add a new loop section (up to 5) |
 | `t` | toggle `onlyIfChanges` on a msg, cmd, or workflow loop step |
+| `r` | edit `retries` (1-3) on the selected step or tree row |
+| `y` | edit `stopAfterEmpty` (early-exit after N consecutive empty rounds) |
 | `[` / `]` | decrease / increase rounds |
 | `f` | toggle `finallyOnError` (run the finally phase even when a step fails) |
 | `u` | undo the last change to the active tab |
