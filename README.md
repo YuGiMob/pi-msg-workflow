@@ -104,7 +104,7 @@ Commands that take a number offer Tab autocomplete.
 
 ### The default workflow (3)
 
-Workflow 3 is the default: with `rounds` set to 4, each round starts with a `{ "tree": "0" }` step that starts a new session, runs workflow 4 (online research, adversarial review, implementation, and a commit), starts another new session, and then runs workflow 2 (code reduction with unchanged behavior, which also commits) — so both workflows begin with a fresh read of the codebase and commit after every run (8 commits in a full run). Its finally phase asks for a summary of the whole run (message 15).
+Workflow 3 is the default: with `rounds` set to 4, each round starts with a `{ "tree": "0" }` step that starts a new session, runs workflow 1 (improvements, value check, implementation, and a commit), starts another new session, and then runs workflow 6 (bug hunting, real-bug check, fixes, and a commit) — so both workflows begin with a fresh read of the codebase and commit after every run (8 commits in a full run). Its finally phase asks for a summary of the whole run (message 15).
 #### `rounds`
 
 Number of review-loop iterations (default `2`, max `5`). Each loop section repeats `rounds` times. `/workflow <workflow> <n>` overrides it for a single run.
@@ -176,13 +176,13 @@ Workflow 2 is a focused review loop that reduces the size of the codebase while 
 
 The tree step resets the context to the response of message 1, the shared read-the-codebase step of this workflow. Its finally phase asks for a commit message (message 17) and commits with the agent's response as the literal message.
 
-### Workflow 3: explore, improve, commit, then review
+### Workflow 3: improvements and bug fixes
 
-Workflow 3 runs two contained workflows per round: workflow 4 (online research, adversarial review, implementation, and a commit in its finally phase) followed by workflow 2 (code reduction with unchanged behavior, which also commits in its finally phase). Each round starts with a `{ "tree": "0" }` step that starts a new session, and another `{ "tree": "0" }` step runs between the two workflows — so both workflow 4 and workflow 2 begin with a fresh read of the codebase (message 1 is sent again) and each commits its own changes with a message it wrote itself (message 17). Its finally phase asks for a summary of the whole run (message 15).
+Workflow 3 runs two contained workflows per round: workflow 1 (improvements, value check, implementation, and a commit in its finally phase) followed by workflow 6 (bug hunting, real-bug check, fixes, and a commit in its finally phase). Each round starts with a `{ "tree": "0" }` step that starts a new session, and another `{ "tree": "0" }` step runs between the two workflows — so both workflow 1 and workflow 6 begin with a fresh read of the codebase (message 1 is sent again) and each commits its own changes with a message it wrote itself (message 17). Its finally phase asks for a summary of the whole run (message 15).
 
 ### Workflow 4: online research and adversarial review
 
-Workflow 4 is the exploration workflow contained in workflow 3. Its start phase reads the codebase, searches the web for similar projects with similar features, checks whether the proposed improvements are worth implementing, and implements them. Its loop is the same review loop as workflow 1 (closer look, fix, validate, stage), and its finally phase asks for a commit message (message 17) and commits with the agent's response as the literal message.
+Workflow 4 is the online-research variant of workflow 1. Its start phase reads the codebase, searches the web for similar projects with similar features, checks whether the proposed improvements are worth implementing, and implements them. Its loop is the same review loop as workflow 1 (closer look, fix, validate, stage), and its finally phase asks for a commit message (message 17) and commits with the agent's response as the literal message. It is not contained in any other workflow; run it directly with `/workflow 4`.
 
 
 ### Workflow 5: test coverage

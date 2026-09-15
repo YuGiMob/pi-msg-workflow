@@ -49,9 +49,9 @@
     "start": [],
     "loop": [
       { "tree": "0", "retries": 2 },
-      { "workflow": "4" },
+      { "workflow": "1" },
       { "tree": "0", "retries": 2 },
-      { "workflow": "2" }
+      { "workflow": "6" }
     ],
     "finally": [
       { "msg": "15" }
