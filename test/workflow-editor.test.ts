@@ -1647,6 +1647,16 @@ describe("WorkflowEditorOverlay", () => {
     }
   });
 
+  it("highlights shortcut keys in the footer", () => {
+    overlay.render(80);
+    const keys = vi.mocked(theme.bold).mock.calls.map((call) => call[0]);
+    expect(keys).toContain("u");
+    expect(keys).toContain("q");
+    const colors = vi.mocked(theme.fg).mock.calls;
+    expect(colors).toContainEqual(["warning", "x"]);
+    expect(colors).toContainEqual(["accent", "s"]);
+  });
+
   it("switches tabs with tab and shift+tab", () => {
     overlay.handleInput("\t");
     expect((overlay as any).activeTab).toBe(1);

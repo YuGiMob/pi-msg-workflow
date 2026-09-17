@@ -7,10 +7,16 @@ import { getWorkflows, getWorkflowConfig, getWorkflowIssues, setWorkflowConfig, 
 import { compareNumericKeys } from "./json-file.js";
 import { errorMessage } from "./errors.js";
 
+export interface FooterHint {
+  keys: string;
+  label: string;
+  tone?: "accent" | "warning";
+}
+
 export interface EditorTab {
   readonly name: string;
   dirty: boolean;
-  readonly footerHints: string;
+  readonly footerHints: readonly FooterHint[];
   setPopup(callback: (text: string) => void): void;
   setInputListener(listener: (active: boolean) => void): void;
   getInputLines(width: number): string[] | null;
@@ -103,21 +109,27 @@ function wrapText(text: string, width: number): string[] {
   return lines;
 }
 
-function wrapHint(text: string, width: number): string[] {
-  const segments = text.split(" · ");
+function hintText(theme: Theme, hint: FooterHint): string {
+  const key = theme.fg(hint.tone ?? "accent", theme.bold(hint.keys));
+  return hint.label === "" ? key : `${key} ${theme.fg("dim", hint.label)}`;
+}
+
+function wrapHints(theme: Theme, hints: readonly FooterHint[], width: number): string[] {
+  const separator = theme.fg("dim", " · ");
   const lines: string[] = [];
   let current = "";
-  for (const segment of segments) {
-    const candidate = current === "" ? segment : `${current} · ${segment}`;
-    if (visibleWidth(candidate) <= width) {
-      current = candidate;
-    } else {
-      if (current !== "") lines.push(current);
+  for (const hint of hints) {
+    const segment = hintText(theme, hint);
+    const candidate = current === "" ? segment : `${current}${separator}${segment}`;
+    if (current !== "" && visibleWidth(candidate) + 1 > width) {
+      lines.push(current);
       current = segment;
+    } else {
+      current = candidate;
     }
   }
   if (current !== "") lines.push(current);
-  return lines;
+  return lines.map((line) => ` ${line}`);
 }
 
 function frameRow(theme: Theme, width: number, content: string): string {
@@ -170,7 +182,7 @@ function formatStopAfterEmptyPrompt(current: number | undefined): string {
 }
 abstract class BaseEditorTab implements EditorTab {
   abstract readonly name: string;
-  abstract readonly footerHints: string;
+  abstract readonly footerHints: readonly FooterHint[];
   protected abstract snapshot(): unknown;
   dirty = false;
   protected flash: string | null = null;
@@ -352,8 +364,24 @@ type SelectableKind = "start" | "tree" | "loop" | "finally";
 type LoadResult = { ok: true; flash?: string } | { ok: false; flash: string };
 export class WorkflowTab extends BaseEditorTab implements EditorTab {
   private index = "1";
-  readonly footerHints = "j/k sel · e edit · a add · x del · d del-wf · J/K move · t if-chg · r retries · y early-exit · [ ] rnds · f fin-err · n new-loop · w switch · u undo · s save";
   readonly draft: WorkflowDraft;
+  readonly footerHints: readonly FooterHint[] = [
+    { keys: "j/k", label: "sel" },
+    { keys: "e", label: "edit" },
+    { keys: "a", label: "add" },
+    { keys: "x", label: "del", tone: "warning" },
+    { keys: "d", label: "del-wf", tone: "warning" },
+    { keys: "J/K", label: "move" },
+    { keys: "t", label: "if-chg" },
+    { keys: "r", label: "retries" },
+    { keys: "y", label: "early-exit" },
+    { keys: "[ ]", label: "rnds" },
+    { keys: "f", label: "fin-err" },
+    { keys: "n", label: "new-loop" },
+    { keys: "w", label: "switch" },
+    { keys: "u", label: "undo" },
+    { keys: "s", label: "save" },
+  ];
   private selection = 0;
   private savedSnapshot: WorkflowSnapshot;
   private loadFailedIndex: string | null = null;
@@ -914,7 +942,7 @@ export class WorkflowTab extends BaseEditorTab implements EditorTab {
         }
       });
     };
-    lines.push(th.fg("dim", truncate(` Workflow ${this.index} · Rounds: ${this.draft.rounds} · fin-err: ${this.draft.finallyOnError ? "on" : "off"}${this.draft.stopAfterEmpty !== undefined ? ` · early-exit: ${this.draft.stopAfterEmpty}` : ""}   ([ ] change · f toggle · w switch)`, innerWidth)));
+    lines.push(th.fg("dim", truncate(` Workflow ${this.index} · Rounds: ${this.draft.rounds} · fin-err: ${this.draft.finallyOnError ? "on" : "off"}${this.draft.stopAfterEmpty !== undefined ? ` · early-exit: ${this.draft.stopAfterEmpty}` : ""}`, innerWidth)));
     lines.push(th.fg("dim", " start"));
     renderSteps(this.draft.start, (i) => this.selection === i);
     for (let s = 0; s < this.sectionCount(); s++) {
@@ -940,7 +968,7 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
   protected constructor(
     private readonly theme: Theme,
     readonly name: string,
-    readonly footerHints: string,
+    readonly footerHints: readonly FooterHint[],
   ) {
     super();
     this.draft = { ...this.load() };
@@ -1123,7 +1151,14 @@ abstract class StoreTab extends BaseEditorTab implements EditorTab {
 
 export class MessagesTab extends StoreTab {
   constructor(theme: Theme) {
-    super(theme, "Messages", "j/k sel · e edit · a add · x del · u undo · s save");
+    super(theme, "Messages", [
+      { keys: "j/k", label: "sel" },
+      { keys: "e", label: "edit" },
+      { keys: "a", label: "add" },
+      { keys: "x", label: "del", tone: "warning" },
+      { keys: "u", label: "undo" },
+      { keys: "s", label: "save" },
+    ]);
   }
   protected load(): Record<string, string> {
     return getMessages();
@@ -1140,7 +1175,14 @@ export class MessagesTab extends StoreTab {
 
 export class CommandsTab extends StoreTab {
   constructor(theme: Theme) {
-    super(theme, "Commands", "j/k sel · e edit · a add · x del · u undo · s save");
+    super(theme, "Commands", [
+      { keys: "j/k", label: "sel" },
+      { keys: "e", label: "edit" },
+      { keys: "a", label: "add" },
+      { keys: "x", label: "del", tone: "warning" },
+      { keys: "u", label: "undo" },
+      { keys: "s", label: "save" },
+    ]);
   }
   protected load(): Record<string, string> {
     return getCommands();
@@ -1363,8 +1405,10 @@ export class WorkflowEditorOverlay {
   render(width: number): string[] {
     const th = this.opts.theme;
     const innerW = width - 2;
-    const hintParts = [this.opts.tabs.length > 1 ? "Tab" : "", this.active.footerHints, "q close"].filter(Boolean);
-    const hintLines = wrapHint(` ${hintParts.join(" · ")}`, innerW);
+    const hintItems: FooterHint[] = [];
+    if (this.opts.tabs.length > 1) hintItems.push({ keys: "Tab", label: "switch tabs" });
+    hintItems.push(...this.active.footerHints, { keys: "q", label: "close" });
+    const hintLines = wrapHints(th, hintItems, innerW);
     const aboveLines = this.active.getAboveContentLine(innerW);
     const maxHeight = Math.floor(this.opts.tui.terminal.rows * MAX_OVERLAY_HEIGHT_RATIO);
     const chromeRows = CHROME_ROWS + hintLines.length - 1 + Math.max(0, aboveLines.length - 1);
@@ -1399,7 +1443,7 @@ export class WorkflowEditorOverlay {
 
     lines.push(borderSep);
     for (const hintLine of hintLines) {
-      lines.push(frameRow(th, innerW, th.fg("dim", hintLine)));
+      lines.push(frameRow(th, innerW, hintLine));
     }
     lines.push(borderBottom);
     return lines;
