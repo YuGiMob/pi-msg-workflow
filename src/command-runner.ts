@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { errorMessage, execFailureMessage } from "./errors.js";
-import { execWithSignal } from "./exec.js";
+import { errorMessage, execFailureMessage } from "./errors";
+import { execWithSignal } from "./exec";
 
 export type CommandResult =
   | { ok: true }

@@ -1,6 +1,6 @@
-import { errorMessage } from "./errors.js";
-import { ensureUserData, ensureUserDataDir, userDataPath } from "./user-data.js";
-import { readJsonObject, sortedByNumericKeys, writeJsonAtomic } from "./json-file.js";
+import { errorMessage } from "./errors";
+import { ensureUserData, ensureUserDataDir, userDataPath } from "./user-data";
+import { readJsonObject, sortedByNumericKeys, writeJsonAtomic } from "./json-file";
 
 export function createJsonStore(fileName: string): {
   get(): Record<string, string>;

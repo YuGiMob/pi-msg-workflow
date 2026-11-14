@@ -1,12 +1,12 @@
 import type { ExecResult, ExtensionAPI, ExtensionCommandContext, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { getMessages } from "./messages.js";
-import { getCommands } from "./commands.js";
-import { errorMessage } from "./errors.js";
-import { execWithSignal } from "./exec.js";
-import { countPhaseMatches, countUserTextMatches, findAnchorAfterMessage, lastAssistantMessageText, lastAssistantStopReason } from "./session-helpers.js";
-import { runCommand, commandFailureMessage, type CommandResult } from "./command-runner.js";
-import { runCommit, commitFailureMessage, type CommitResult } from "./commit.js";
-import { getWorkflowConfig, getWorkflowRunError, loopSections, type WorkflowConfig, type LoopStep, type StartStep } from "./workflow-config.js";
+import { getMessages } from "./messages";
+import { getCommands } from "./commands";
+import { errorMessage } from "./errors";
+import { execWithSignal } from "./exec";
+import { countPhaseMatches, countUserTextMatches, findAnchorAfterMessage, lastAssistantMessageText, lastAssistantStopReason } from "./session-helpers";
+import { runCommand, commandFailureMessage, type CommandResult } from "./command-runner";
+import { runCommit, commitFailureMessage, type CommitResult } from "./commit";
+import { getWorkflowConfig, getWorkflowRunError, loopSections, type WorkflowConfig, type LoopStep, type StartStep } from "./workflow-config";
 
 const SEND_START_TIMEOUT_MS = 5000;
 const SEND_MAX_ATTEMPTS = 3;

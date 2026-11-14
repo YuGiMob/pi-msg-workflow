@@ -1,7 +1,7 @@
-import { errorMessage } from "./errors.js";
-import { readJsonFile, readJsonObject, sortedByNumericKeys, writeJsonAtomic } from "./json-file.js";
-import { MAX_ROUNDS, WORKFLOW_FILE } from "./constants.js";
-import { ensureUserData, ensureUserDataDir, userDataPath } from "./user-data.js";
+import { errorMessage } from "./errors";
+import { readJsonFile, readJsonObject, sortedByNumericKeys, writeJsonAtomic } from "./json-file";
+import { MAX_ROUNDS, WORKFLOW_FILE } from "./constants";
+import { ensureUserData, ensureUserDataDir, userDataPath } from "./user-data";
 
 export interface LoopStep {
   tree?: string;

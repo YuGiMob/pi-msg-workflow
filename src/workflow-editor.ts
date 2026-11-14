@@ -1,11 +1,11 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Key, decodeKittyPrintable, matchesKey, visibleWidth, type OverlayHandle, type TUI } from "@earendil-works/pi-tui";
-import { getMessages, setMessages } from "./messages.js";
-import { getCommands, setCommands } from "./commands.js";
-import { MAX_ROUNDS, MAX_LOOP_SECTIONS } from "./constants.js";
-import { getWorkflows, getWorkflowConfig, getWorkflowIssues, setWorkflowConfig, deleteWorkflowConfig, referencedIndices, referencedCommands, referencedWorkflows, loopSections, describeWorkflow, isNumericString, isValidRetries, isValidStopAfterEmpty, type LoopStep, type WorkflowConfig } from "./workflow-config.js";
-import { compareNumericKeys } from "./json-file.js";
-import { errorMessage } from "./errors.js";
+import { getMessages, setMessages } from "./messages";
+import { getCommands, setCommands } from "./commands";
+import { MAX_ROUNDS, MAX_LOOP_SECTIONS } from "./constants";
+import { getWorkflows, getWorkflowConfig, getWorkflowIssues, setWorkflowConfig, deleteWorkflowConfig, referencedIndices, referencedCommands, referencedWorkflows, loopSections, describeWorkflow, isNumericString, isValidRetries, isValidStopAfterEmpty, type LoopStep, type WorkflowConfig } from "./workflow-config";
+import { compareNumericKeys } from "./json-file";
+import { errorMessage } from "./errors";
 
 export interface FooterHint {
   keys: string;

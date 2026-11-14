@@ -1,16 +1,16 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
-import { getMessages } from "./src/messages.js";
-import { getCommands } from "./src/commands.js";
-import { MAX_ROUNDS, WORKFLOW_FILE, MESSAGES_FILE, COMMANDS_FILE } from "./src/constants.js";
-import { compareNumericKeys } from "./src/json-file.js";
-import { runCommand, commandFailureMessage } from "./src/command-runner.js";
-import { getWorkflows, getWorkflowConfig, getWorkflowRunError, loopSections, describeWorkflow, isNumericString, type StartStep, type LoopStep, type WorkflowConfig } from "./src/workflow-config.js";
-import { resetUserData } from "./src/user-data.js";
-import { WorkflowEditorOverlay, WorkflowTab, MessagesTab, CommandsTab, MAX_OVERLAY_HEIGHT_RATIO, type EditorTab } from "./src/workflow-editor.js";
-import { captureConsoleMessages } from "./src/console-capture.js";
-import { errorMessage } from "./src/errors.js";
-import { requestWorkflowStop, isWorkflowRunning, runWorkflow, notifyMissingEntry, navigateToMessageAnchor, notifyNavigationStatus, extractWorkflowVars, interpolateText } from "./src/workflow-runner.js";
+import { getMessages } from "./src/messages";
+import { getCommands } from "./src/commands";
+import { MAX_ROUNDS, WORKFLOW_FILE, MESSAGES_FILE, COMMANDS_FILE } from "./src/constants";
+import { compareNumericKeys } from "./src/json-file";
+import { runCommand, commandFailureMessage } from "./src/command-runner";
+import { getWorkflows, getWorkflowConfig, getWorkflowRunError, loopSections, describeWorkflow, isNumericString, type StartStep, type LoopStep, type WorkflowConfig } from "./src/workflow-config";
+import { resetUserData } from "./src/user-data";
+import { WorkflowEditorOverlay, WorkflowTab, MessagesTab, CommandsTab, MAX_OVERLAY_HEIGHT_RATIO, type EditorTab } from "./src/workflow-editor";
+import { captureConsoleMessages } from "./src/console-capture";
+import { errorMessage } from "./src/errors";
+import { requestWorkflowStop, isWorkflowRunning, runWorkflow, notifyMissingEntry, navigateToMessageAnchor, notifyNavigationStatus, extractWorkflowVars, interpolateText } from "./src/workflow-runner";
 
 const OVERLAY_OPTIONS = {
   overlay: true,

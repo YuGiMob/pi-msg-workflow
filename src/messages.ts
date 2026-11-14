@@ -1,4 +1,4 @@
-import { createJsonStore } from "./json-store.js";
-import { MESSAGES_FILE } from "./constants.js";
+import { createJsonStore } from "./json-store";
+import { MESSAGES_FILE } from "./constants";
 
 export const { get: getMessages, set: setMessages } = createJsonStore(MESSAGES_FILE);

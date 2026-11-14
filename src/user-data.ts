@@ -3,9 +3,9 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { errorMessage } from "./errors.js";
-import { readJsonObject, writeJsonAtomic } from "./json-file.js";
-import { DEFAULTS_FILE } from "./constants.js";
+import { errorMessage } from "./errors";
+import { readJsonObject, writeJsonAtomic } from "./json-file";
+import { DEFAULTS_FILE } from "./constants";
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
