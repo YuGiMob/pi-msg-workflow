@@ -64,46 +64,63 @@ function requireArg(ctx: ExtensionCommandContext, args: string, usage: string): 
   return null;
 }
 
-function registerStoreCommand(pi: ExtensionAPI, name: string, noun: string, getStore: () => Record<string, string>, execute: (value: string, num: string, ctx: ExtensionCommandContext) => Promise<boolean>): void {
-  const isMessage = noun === "Message";
+function splitNumberAndExtra(args: string): { num: string; extra: string } {
+  const trimmed = args.trim();
+  const at = trimmed.search(/\s/);
+  if (at === -1) return { num: trimmed, extra: "" };
+  return { num: trimmed.slice(0, at), extra: trimmed.slice(at).trim() };
+}
+
+function registerSendCommand(pi: ExtensionAPI, name: string): void {
   pi.registerCommand(name, {
-    description: isMessage ? "Send a predefined message by number" : "Perform a predefined command by number",
-    getArgumentCompletions: (prefix) => storeCompletions(getStore(), noun, prefix),
+    description: "Send a predefined message by number, with optional text appended to it",
+    getArgumentCompletions: (prefix) => storeCompletions(getMessages(), "Message", prefix),
     handler: async (args, ctx: ExtensionCommandContext) => {
       if (!requireInteractive(ctx, name)) return;
-      const num = requireArg(ctx, args, `/${name} <number>`);
-      if (num === null) return;
-      const value = getStore()[num];
-      if (!value) {
-        notifyMissingEntry(ctx, noun, num, `Use /workflow-edit to create it in the ${noun}s tab.`);
+      if (args.trim() === "") {
+        ctx.ui.notify(`Usage: /${name} <number> [text]`, "warning");
         return;
       }
-      const ok = await execute(value, num, ctx);
-      if (!ok) return;
-      ctx.ui.notify(`${noun} ${num} ${isMessage ? "sent" : "executed"}`, "info");
+      const { num, extra } = splitNumberAndExtra(args);
+      const stored = getMessages()[num];
+      if (!stored) {
+        notifyMissingEntry(ctx, "Message", num, "Use /workflow-edit to create it in the Messages tab.");
+        return;
+      }
+      try {
+        pi.sendUserMessage(extra === "" ? stored : `${stored}\n\n${extra}`, { deliverAs: "followUp" });
+      } catch (err) {
+        ctx.ui.notify(`Failed to send message ${num}: ${errorMessage(err)}`, "error");
+        return;
+      }
+      ctx.ui.notify(extra === "" ? `Message ${num} sent` : `Message ${num} sent with appended text`, "info");
     },
   });
 }
 
-function registerSendCommand(pi: ExtensionAPI, name: string): void {
-  registerStoreCommand(pi, name, "Message", getMessages, async (message, num, ctx) => {
-    try {
-      pi.sendUserMessage(message, { deliverAs: "followUp" });
-    } catch (err) {
-      ctx.ui.notify(`Failed to send message ${num}: ${errorMessage(err)}`, "error");
-      return false;
-    }
-    return true;
-  });
-}
 function registerPerformCommand(pi: ExtensionAPI, name: string): void {
-  registerStoreCommand(pi, name, "Command", getCommands, async (command, num, ctx) => {
-    const result = await runCommand(pi, command, `Running ${command}...`, ctx.ui, ctx.signal);
-    if (!result.ok) {
-      ctx.ui.notify(commandFailureMessage(num, result), result.reason === "failed" ? "error" : "warning");
-      return false;
-    }
-    return true;
+  pi.registerCommand(name, {
+    description: "Perform a predefined command by number",
+    getArgumentCompletions: (prefix) => storeCompletions(getCommands(), "Command", prefix),
+    handler: async (args, ctx: ExtensionCommandContext) => {
+      if (!requireInteractive(ctx, name)) return;
+      const num = args.trim();
+      if (num === "") {
+        ctx.ui.notify(`Usage: /${name} <number>`, "warning");
+        return;
+      }
+      const command = getCommands()[num];
+      if (!command) {
+        notifyMissingEntry(ctx, "Command", num, "Use /workflow-edit to create it in the Commands tab.");
+        return;
+      }
+      const result = await runCommand(pi, command, `Running ${command}...`, ctx.ui, ctx.signal);
+      if (!result.ok) {
+        ctx.ui.notify(commandFailureMessage(num, result), result.reason === "failed" ? "error" : "warning");
+        return;
+      }
+      ctx.ui.notify(`Command ${num} executed`, "info");
+    },
   });
 }
 

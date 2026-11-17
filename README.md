@@ -4,7 +4,7 @@ Numbered message and command stores plus configurable improvement workflows for 
 
 ## What you get
 
-- `/msg 3` sends message 3 as a follow-up. The store is a plain JSON file, editable with `/show-msg` or the editor.
+- `/msg 3` sends message 3 as a follow-up; `/msg 3 extra text` sends it with `extra text` appended after a blank line. The store is a plain JSON file, editable with `/show-msg` or the editor.
 - `/cmd 1` runs command 1 via `pi.exec`. No shell, just a whitespace split with quoted-argument support.
 - `workflow.json` defines any number of numbered workflows (start phase, review loop, finally phase). `/workflow` runs workflow 1, `/workflow 2` runs workflow 2, and `/workflow 2 3` runs three review rounds of workflow 2. `/workflow dry` prints the plan without sending or executing anything.
 - `/workflow-edit` opens a three-tab overlay for the workflow, messages, and commands: add, edit, delete, reorder, and undo, with cross-tab reference checks on save.
@@ -37,7 +37,7 @@ The package ships with default messages (`1` to `28`), default commands (`1` = `
 
 | Command | Description |
 | --- | --- |
-| `/msg <number>` | Send a predefined message as a follow-up. |
+| `/msg <number> [text]` | Send a predefined message as a follow-up, appending `[text]` when given. |
 | `/show-msg [number]` | Display a message, or list all messages. |
 | `/cmd <number>` | Perform a predefined command. |
 | `/show-cmd [number]` | Display a command, or list all commands. |
@@ -47,6 +47,8 @@ The package ships with default messages (`1` to `28`), default commands (`1` = `
 | `/tree-jump <number>` | Reset the agent's context to the response of message N. |
 
 Commands that take a number offer Tab autocomplete.
+
+`/msg 3 extra text` sends message 3 with `extra text` appended after a blank line. The append applies to that send only: the stored message is never modified, so `/msg 3` on its own still sends it as written.
 
 ## The workflow
 
@@ -258,7 +260,7 @@ Each user copy is tracked against the checksum of the packaged default it was sy
 ## Limitations
 
 - Command content is split on whitespace (single- and double-quoted arguments supported) and executed directly. Pipes, `&&`, `||`, and redirection are not supported; use one command per step or a script.
-- The start phase skips msg steps whose text matches the leading user messages of the session, in order, stopping at the first non-matching user message. A message you typed manually with identical text counts as already sent. cmd steps always re-run.
+- The start phase skips msg steps whose text matches the leading user messages of the session, in order, stopping at the first non-matching user message. A message you typed manually with identical text counts as already sent, and a message sent with appended text never matches its stored text. cmd steps always re-run.
 - `/workflow` refuses to start while another workflow is running. Press Esc to cancel it after the current step.
 
 ## Troubleshooting

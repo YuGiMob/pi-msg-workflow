@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
 const MESSAGES = {
   "1": "Test message one",
@@ -77,6 +77,56 @@ describe("messages extension", () => {
       expect(ctx.ui.notify).toHaveBeenCalledWith("Message 1 sent", "info");
     });
 
+    it("appends trailing text to the predefined message", async () => {
+      const cmd = capturedCommands.find((c: any) => c.name === "msg");
+      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
+
+      await cmd.cmd.handler("1 also check the tests", ctx);
+
+      expect(pi.sendUserMessage).toHaveBeenCalledWith("Test message one\n\nalso check the tests", { deliverAs: "followUp" });
+      expect(ctx.ui.notify).toHaveBeenCalledWith("Message 1 sent with appended text", "info");
+    });
+
+    it("keeps the stored message unchanged when text is appended", async () => {
+      const cmd = capturedCommands.find((c: any) => c.name === "msg");
+      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
+
+      await cmd.cmd.handler("1 and then more", ctx);
+      await cmd.cmd.handler("1", ctx);
+
+      expect(pi.sendUserMessage).toHaveBeenLastCalledWith("Test message one", { deliverAs: "followUp" });
+      expect(writeFileSync).not.toHaveBeenCalled();
+    });
+
+    it("keeps internal spacing in the appended text", async () => {
+      const cmd = capturedCommands.find((c: any) => c.name === "msg");
+      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
+
+      await cmd.cmd.handler("  1   keep   this  ", ctx);
+
+      expect(pi.sendUserMessage).toHaveBeenCalledWith("Test message one\n\nkeep   this", { deliverAs: "followUp" });
+    });
+
+    it("does not append whitespace-only text", async () => {
+      const cmd = capturedCommands.find((c: any) => c.name === "msg");
+      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
+
+      await cmd.cmd.handler("1    ", ctx);
+
+      expect(pi.sendUserMessage).toHaveBeenCalledWith("Test message one", { deliverAs: "followUp" });
+      expect(ctx.ui.notify).toHaveBeenCalledWith("Message 1 sent", "info");
+    });
+
+    it("reports a missing message when text is appended", async () => {
+      const cmd = capturedCommands.find((c: any) => c.name === "msg");
+      const ctx = { hasUI: true, ui: { notify: vi.fn() } };
+
+      await cmd.cmd.handler("99 more text", ctx);
+
+      expect(pi.sendUserMessage).not.toHaveBeenCalled();
+      expect(ctx.ui.notify).toHaveBeenCalledWith("Message 99 does not exist. Use /workflow-edit to create it in the Messages tab.", "warning");
+    });
+
     it("shows warning for non-existent message", async () => {
       const cmd = capturedCommands.find((c: any) => c.name === "msg");
       const ctx = { hasUI: true, ui: { notify: vi.fn() } };
@@ -95,7 +145,7 @@ describe("messages extension", () => {
 
       await cmd.cmd.handler("", ctx);
 
-      expect(ctx.ui.notify).toHaveBeenCalledWith("Usage: /msg <number>", "warning");
+      expect(ctx.ui.notify).toHaveBeenCalledWith("Usage: /msg <number> [text]", "warning");
     });
 
     it("requires interactive mode", async () => {
